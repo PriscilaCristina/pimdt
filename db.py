@@ -9,20 +9,35 @@ import psycopg2.extras
 # Evita crash de versões em cache do app.py que ainda procuram essa variável
 USE_PG = True 
 
+# ── Função auxiliar para ler os secrets de forma segura ───────────────────────
+def _get_secret(key: str, default: str = "") -> str:
+    try:
+        import streamlit as st
+        # Tenta pegar do secrets primeiro, depois do ambiente local
+        return st.secrets.get(key, os.environ.get(key, default))
+    except Exception:
+        return os.environ.get(key, default)
+
 # ── Pool cacheado pelo Streamlit (vive durante toda a sessão do servidor) ─────
 def get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     """Importado e cacheado em app.py com @st.cache_resource."""
-    import streamlit as st
     
-    # Busca a URL completa do banco nos secrets
-    db_url = st.secrets.get("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
-    
-    if not db_url:
-        raise ValueError("DATABASE_URL não configurada nos Secrets do Streamlit.")
+    host = _get_secret("DB_HOST", "aws-0-sa-east-1.pooler.supabase.com")
+    port = int(_get_secret("DB_PORT", 6543))
+    user = _get_secret("DB_USER", "postgres.mmdhywifopqkblvmuwlq")
+    password = _get_secret("DB_PASSWORD", "")
+    dbname = _get_secret("DB_NAME", "postgres")
+
+    if not password:
+        raise ValueError("DB_PASSWORD não encontrada nos Secrets do Streamlit!")
 
     return psycopg2.pool.ThreadedConnectionPool(
         minconn=2, maxconn=10,
-        dsn=db_url,
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        dbname=dbname,
         sslmode="require",
         options="-c statement_timeout=15000 -c idle_in_transaction_session_timeout=30000",
     )
