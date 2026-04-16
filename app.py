@@ -11,8 +11,9 @@ st.set_page_config(page_title="Finanças Família", page_icon="💚",
 MN   = {"01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril","05":"Maio",
         "06":"Junho","07":"Julho","08":"Agosto","09":"Setembro","10":"Outubro",
         "11":"Novembro","12":"Dezembro"}
-CATS = ["Moradia","Transporte","Saúde","Educação","Alimentação","Lazer",
-        "Streaming","Serviços","Vestuário","Outros"]
+CATS = ["Moradia", "Água", "Luz", "Telefone/Internet", "Condomínio", "IPTU", 
+        "Transporte", "Saúde", "Seguro de Vida", "Educação (Isa)", "Supermercado", 
+        "Lazer", "Streaming", "Serviços", "Vestuário", "Outros"]
 PAY  = ["PIX","Dinheiro","Débito","Transferência","Outro"]
 
 def R(v):
@@ -50,21 +51,31 @@ def _check_token(t):
 class LocalState:
     @staticmethod
     def get(month):
-        """Busca do banco apenas no primeiro acesso do mês. Depois lê da RAM."""
         if "mem_data" not in st.session_state or st.session_state.get("mem_month") != month:
             st.session_state.mem_data = db.get_month_data(month)
             st.session_state.mem_month = month
         return st.session_state.mem_data
 
     @staticmethod
+    def get_leftover(month):
+        """Calcula a sobra do mês dinamicamente sem usar cache."""
+        d = db.get_month_data(month)
+        t_inc = sum(r["amount"] for r in d["income"])
+        cc = db.cc_total_from_data(d["cc_all"], month)
+        t_gas = sum(r["amount"] for r in d["fixed"]) + cc + \
+                sum(r["amount"] for r in d["extras"]) + \
+                sum(r["amount"] for r in d["subs"] if r["active"]) + \
+                sum(r["amount"] for r in d["bills"])
+        t_debt = sum(r["monthly_payment"] for r in d["debts"])
+        return t_inc - t_gas - t_debt
+
+    @staticmethod
     def reload():
-        """Força busca completa no banco (usado após operações complexas)"""
         st.session_state.pop("mem_data", None)
         st.rerun()
 
     @staticmethod
     def remove(table, rid):
-        """Remove item da tela instantaneamente."""
         d = st.session_state.mem_data
         if table in d:
             d[table] = [x for x in d[table] if x["id"] != rid]
@@ -72,13 +83,11 @@ class LocalState:
 
     @staticmethod
     def add(table, record):
-        """Adiciona item na tela instantaneamente."""
         st.session_state.mem_data[table].append(record)
         st.rerun()
 
     @staticmethod
     def update(table, rid, **kwargs):
-        """Atualiza campos de um item instantaneamente."""
         for row in st.session_state.mem_data[table]:
             if row["id"] == rid:
                 row.update(kwargs)
@@ -87,9 +96,8 @@ class LocalState:
 
     @staticmethod
     def toggle_payment(month, itype, iid, amount, paid):
-        """Alterna checkbox de pagamento na velocidade da luz."""
         d = st.session_state.mem_data
-        db.set_payment(month, itype, iid, "", amount, paid) # Background DB call
+        db.set_payment(month, itype, iid, "", amount, paid)
         found = False
         for p in d["payments"]:
             if p["item_type"] == itype and p["item_id"] == iid:
@@ -99,7 +107,6 @@ class LocalState:
         if not found:
             d["payments"].append({"month": month, "item_type": itype, "item_id": iid, "amount": amount, "paid": 1 if paid else 0})
         st.rerun()
-
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 CSS = """<style>
@@ -112,8 +119,8 @@ html,body,.stApp{background:var(--white)!important;color:var(--body)!important;f
 #MainMenu,footer,header,.stDeployButton{visibility:hidden!important}
 .block-container{padding-top:.8rem!important;max-width:1300px}
 [data-testid="collapsedControl"],[data-testid="stSidebarCollapseButton"],button[data-testid="baseButton-header"]{display:none!important}
-.stTabs [data-baseweb="tab-list"]{gap:0;border-bottom:2px solid var(--border);background:transparent;padding:0}
-.stTabs [data-baseweb="tab"]{background:transparent!important;color:var(--muted)!important;font-family:'Inter',sans-serif!important;font-size:13px!important;font-weight:500!important;padding:10px 16px!important;border-radius:0!important;border-bottom:2px solid transparent!important;margin-bottom:-2px}
+.stTabs [data-baseweb="tab-list"]{gap:0;border-bottom:2px solid var(--border);background:transparent;padding:0;overflow-x:auto}
+.stTabs [data-baseweb="tab"]{background:transparent!important;color:var(--muted)!important;font-family:'Inter',sans-serif!important;font-size:13px!important;font-weight:500!important;padding:10px 16px!important;border-radius:0!important;border-bottom:2px solid transparent!important;margin-bottom:-2px;white-space:nowrap}
 .stTabs [aria-selected="true"]{color:var(--green2)!important;border-bottom:2px solid var(--green)!important}
 .stTabs [data-baseweb="tab-highlight"],.stTabs [data-baseweb="tab-border"]{display:none!important}
 .card{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:12px}
@@ -168,7 +175,6 @@ def login_page():
                 st.rerun()
             else:
                 st.error("Senha incorreta.")
-        st.markdown('<p style="text-align:center;color:#d1d5db;font-size:11px;margin-top:14px">🟢 Supabase · Dados seguros</p>', unsafe_allow_html=True)
 
 def sidebar(month):
     with st.sidebar:
@@ -193,13 +199,8 @@ def sidebar(month):
             ok, msg = db.undo_last()
             (st.success if ok else st.warning)(msg)
             LocalState.reload()
-        st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
-        if st.button("⊕ Copiar mês anterior", width="stretch"):
-            n = db.copy_fixed_prev(month)
-            st.success(f"{n} itens copiados") if n > 0 else st.info("Já existem ou nenhum.")
-            LocalState.reload()
         st.divider()
-        st.markdown('<div style="font-size:10px;color:#16a34a;text-align:center;padding:2px 0">🚀 Optimistic UI Ativado</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:10px;color:#16a34a;text-align:center;padding:2px 0">🚀 Optimistic UI + Auto Propagação</div>', unsafe_allow_html=True)
         st.divider()
         if st.button("↪ Sair", width="stretch"):
             st.session_state.auth = False
@@ -208,18 +209,16 @@ def sidebar(month):
             st.rerun()
     return st.session_state.month
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ABAS
+# ══════════════════════════════════════════════════════════════════════════════
+
 def tab_painel(month, d):
     inc   = d["income"]; fix   = d["fixed"]; ext   = d["extras"]; subs  = d["subs"]
-    debts = d["debts"]; bills = d["bills"]; invs  = d["investments"]; goals = d["goals"]
-    ins   = d["insurance"]; pays  = d["payments"]; cfg   = d["config"]; ef    = d["ef"]
+    debts = d["debts"]; bills = d["bills"]
     cc_all= d["cc_all"]
 
     cc       = db.cc_total_from_data(cc_all, month)
-    inv_this = next((float(r["amount_added"]) for r in invs if r["month"]==month), 0.0)
-    t_inv    = db.investment_last_total(invs)
-    t_ins    = db.insurance_total_from_data(ins)
-    ef_target= float(cfg.get("ef_target","0") or 0)
-
     t_inc  = sum(r["amount"] for r in inc)
     t_fix  = sum(r["amount"] for r in fix)
     t_ext  = sum(r["amount"] for r in ext)
@@ -229,105 +228,118 @@ def tab_painel(month, d):
     t_gasto= t_fix + cc + t_ext + t_subs + t_bills
     sobra  = t_inc - t_gasto - t_debt
 
-    t_paid = sum(p["amount"] for p in pays if p["paid"])
-    t_pend = (t_gasto + t_debt) - t_paid
-
     cor = "#16a34a" if sobra >= 0 else "#ef4444"
     st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 14px">
-      <div><h1 style="font-size:26px;font-weight:700;color:#1a2332;margin:0">Oi, Família Peixoto! 👋</h1>
-      <p style="color:#6b7280;font-size:13px;margin-top:3px">Painel de {ML(month)}</p></div>
-      <div style="display:flex;gap:8px">
-        <div style="text-align:center;padding:8px 14px;background:#f0fdf4;border-radius:10px;border:1px solid #bbf7d0"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#16a34a">Pago</div><div style="font-size:16px;font-weight:700;color:#16a34a;font-family:DM Mono,monospace">{R(t_paid)}</div></div>
-        <div style="text-align:center;padding:8px 14px;background:#fff7ed;border-radius:10px;border:1px solid #fed7aa"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#ea580c">A pagar</div><div style="font-size:16px;font-weight:700;color:#ea580c;font-family:DM Mono,monospace">{R(t_pend)}</div></div>
-        <div style="text-align:center;padding:8px 14px;background:{"#f0fdf4" if sobra>=0 else "#fef2f2"};border-radius:10px;border:1px solid {"#bbf7d0" if sobra>=0 else "#fecaca"}"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:{cor}">Saldo</div><div style="font-size:16px;font-weight:700;color:{cor};font-family:DM Mono,monospace">{R(sobra)}</div></div>
-      </div></div>""", unsafe_allow_html=True)
+      <div><h1 style="font-size:26px;font-weight:700;color:#1a2332;margin:0">Painel Geral</h1>
+      <p style="color:#6b7280;font-size:13px;margin-top:3px">Visão executiva de {ML(month)}</p></div>
+    </div>""", unsafe_allow_html=True)
 
     cols = st.columns(4, gap="small")
-    with cols[0]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#16a34a">{R(t_inc)}</div><div class="mc-label">Renda total</div></div>', unsafe_allow_html=True)
-    with cols[1]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#ef4444">{R(t_gasto+t_debt)}</div><div class="mc-label">Total saídas</div></div>', unsafe_allow_html=True)
-    with cols[2]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#3b82f6">{R(ef)}</div><div class="mc-label">Reserva</div></div>', unsafe_allow_html=True)
-    with cols[3]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#8b5cf6">{R(t_inv)}</div><div class="mc-label">Investido total</div></div>', unsafe_allow_html=True)
+    with cols[0]: st.markdown(f'<div class="mc" style="border-top:3px solid #16a34a"><div class="mc-val" style="color:#16a34a">{R(t_inc)}</div><div class="mc-label">Renda Esperada</div></div>', unsafe_allow_html=True)
+    with cols[1]: st.markdown(f'<div class="mc" style="border-top:3px solid #ef4444"><div class="mc-val" style="color:#ef4444">{R(t_gasto+t_debt)}</div><div class="mc-label">Total Saídas</div></div>', unsafe_allow_html=True)
+    
+    # Busca a sobra real do mês anterior para o card "Guardado"
+    prev_leftover = LocalState.get_leftover(prev_m(month))
+    man_saved = sum(float(r["amount_added"]) for r in d["investments"] if r["month"]==month)
+    total_guardado_mes = man_saved + (prev_leftover if prev_leftover > 0 else 0)
+
+    with cols[2]: st.markdown(f'<div class="mc" style="border-top:3px solid #3b82f6"><div class="mc-val" style="color:#3b82f6">{R(total_guardado_mes)}</div><div class="mc-label">Sobra Acumulada</div></div>', unsafe_allow_html=True)
+    with cols[3]: st.markdown(f'<div class="mc" style="border-top:3px solid {cor}"><div class="mc-val" style="color:{cor}">{R(sobra)}</div><div class="mc-label">Saldo Final (Mês)</div></div>', unsafe_allow_html=True)
     st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
 
-    left, right = st.columns([1.1,1], gap="medium")
+    from collections import defaultdict
+    cat_t = defaultdict(float)
+    for r in fix:   cat_t[r["category"]] += r["amount"]
+    for r in ext:   cat_t[r["category"]] += r["amount"]
+    for r in bills: cat_t["Contas"]       += r["amount"]
+    for r in subs:
+        if r["active"]: cat_t["Assinaturas"] += r["amount"]
+    if cc>0:   cat_t["Cartão"]      += cc
+    
+    left, right = st.columns([1, 1])
     with left:
-        st.markdown('<div class="card card-green">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Entradas</div>', unsafe_allow_html=True)
-        for due in [15, 30]:
-            sub = [r for r in inc if r["due_day"]==due]
-            if not sub: continue
-            st.markdown(f'<div style="margin:4px 0 4px"><span class="badge b-{15 if due==15 else 30}">Dia {due}</span></div>', unsafe_allow_html=True)
-            for r in sub:
-                c1,c2,c3,c4 = st.columns([3,2,1,1])
-                c1.markdown(f'<span style="font-size:13px">{r["label"]}</span>', unsafe_allow_html=True)
-                c2.markdown(f'<span style="font-family:DM Mono,monospace;color:#16a34a;font-size:13px">{R(r["amount"])}</span>', unsafe_allow_html=True)
-                if c3.button("✎", key=f"ei{r['id']}"):   st.session_state[f"ei{r['id']}"]=True
-                if c4.button("✕", key=f"di{r['id']}"):
-                    db.del_income(r["id"]); LocalState.remove("income", r["id"])
-                if st.session_state.get(f"ei{r['id']}"):
-                    with st.form(f"eif{r['id']}"):
-                        nl=st.text_input("Descrição",r["label"]); na=st.number_input("Valor",value=float(r["amount"]),step=10.)
-                        nd=st.selectbox("Dia",[15,30],index=0 if r["due_day"]==15 else 1)
-                        if st.form_submit_button("Salvar"):
-                            db.update_income(r["id"],nl,na,nd)
-                            LocalState.update("income", r["id"], label=nl, amount=na, due_day=nd)
-                            del st.session_state[f"ei{r['id']}"]; st.rerun()
-        with st.expander("+ Adicionar entrada"):
-            with st.form("add_inc"):
-                l=st.text_input("Descrição","",placeholder="Ex: Salário…"); a=st.number_input("Valor",min_value=0.,step=50.); d_=st.selectbox("Dia",[15,30])
-                if st.form_submit_button("Adicionar"):
-                    if l and a>0: 
-                        rid = db.add_income(month,l,a,d_)
-                        LocalState.add("income", {"id":rid, "month":month, "label":l, "amount":a, "due_day":d_})
-        st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total</span><span style="color:#16a34a;font-family:DM Mono,monospace">{R(t_inc)}</span></div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="card card-blue">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Reserva de Emergência</div>', unsafe_allow_html=True)
-        ef_pct = (ef/ef_target*100) if ef_target>0 else 0
-        mc = round(ef/t_gasto if t_gasto>0 else 0, 1)
-        st.markdown(f'<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px">Saldo</span><span style="font-family:DM Mono,monospace;color:#3b82f6;font-weight:600">{R(ef)}</span></div><div style="font-size:11px;color:#6b7280;margin-bottom:4px">Meta: {R(ef_target)} · Cobre {mc} meses</div>{prog_bar(ef_pct,"#3b82f6")}', unsafe_allow_html=True)
-        with st.expander("Atualizar reserva"):
-            with st.form("ef_form"):
-                nb=st.number_input("Saldo (R$)",value=float(ef),step=100.); nt_=st.number_input("Meta (R$)",value=float(ef_target or t_gasto*6),step=500.)
-                if st.form_submit_button("Salvar"):
-                    db.set_ef(month,nb); db.set_config("ef_target",str(nt_))
-                    st.session_state.mem_data["ef"] = nb
-                    st.session_state.mem_data["config"]["ef_target"] = str(nt_)
-                    st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        from collections import defaultdict
-        cat_t = defaultdict(float)
-        for r in fix:   cat_t[r["category"]] += r["amount"]
-        for r in ext:   cat_t[r["category"]] += r["amount"]
-        for r in bills: cat_t["Contas"]       += r["amount"]
-        for r in subs:
-            if r["active"]: cat_t["Assinaturas"] += r["amount"]
-        if cc>0:   cat_t["Cartão"]      += cc
-        if t_ins>0:cat_t["Seguros"]     += t_ins
-        if inv_this>0: cat_t["Investimento"] += inv_this
         if cat_t:
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Onde vai meu dinheiro</div>', unsafe_allow_html=True)
+            st.markdown('<div class="sec">Composição de Gastos</div>', unsafe_allow_html=True)
             cp=["#00c896","#3b82f6","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#ec4899","#84cc16","#f97316","#6b7280"]
             lp,vp=list(cat_t.keys()),list(cat_t.values())
-            fig=go.Figure(go.Pie(labels=lp,values=vp,hole=0.5,marker_colors=cp[:len(lp)],textinfo="label+percent",textfont_size=11,hovertemplate="%{label}: R$ %{value:,.2f}<extra></extra>"))
-            fig.update_layout(height=230,margin=dict(t=5,b=5,l=0,r=0),paper_bgcolor="white",showlegend=False,font_family="Inter")
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
+            fig=go.Figure(go.Pie(labels=lp,values=vp,hole=0.6,marker_colors=cp[:len(lp)],textinfo="label+percent",textfont_size=11,hovertemplate="%{label}: R$ %{value:,.2f}<extra></extra>"))
+            fig.update_layout(height=280,margin=dict(t=5,b=5,l=0,r=0),paper_bgcolor="white",showlegend=False,font_family="Inter")
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
             st.markdown('</div>', unsafe_allow_html=True)
-
     with right:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<div class="sec">Resumo do Mês</div>', unsafe_allow_html=True)
+        for label,value,color in [("📈 Renda do Mês",t_inc,"#16a34a"),("🏠 Fixos e Contas",t_fix+t_bills,"#ef4444"),("💳 Cartão",cc,"#f59e0b"),("📤 Variáveis",t_ext,"#6b7280"),("📱 Assinaturas",t_subs,"#8b5cf6"),("⚠️ Dívidas",t_debt,"#dc2626")]:
+            if value>0:
+                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;border-bottom:1px dashed var(--border)"><span>{label}</span><span style="font-family:DM Mono,monospace;color:{color};font-weight:600">{R(value)}</span></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+def tab_renda(month, d):
+    inc = d["income"]
+    t_inc = sum(r["amount"] for r in inc)
+    st.markdown(f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 14px"><div><h2 style="font-size:20px;font-weight:700;color:#1a2332;margin:0">Renda Esperada</h2><p style="color:#6b7280;font-size:12px;margin:3px 0 0">Propagada automaticamente para os próximos meses</p></div><div style="font-size:20px;font-weight:700;color:#16a34a;font-family:DM Mono,monospace">{R(t_inc)}</div></div>', unsafe_allow_html=True)
+    left, right = st.columns([1.2, 1], gap="medium")
+    with left:
+        st.markdown('<div class="card card-green">', unsafe_allow_html=True)
+        st.markdown(f'<div class="sec">Entradas de {ML(month)}</div>', unsafe_allow_html=True)
+        if inc:
+            for due in [15, 30]:
+                sub = [r for r in inc if r["due_day"]==due]
+                if not sub: continue
+                st.markdown(f'<div style="margin:4px 0 4px"><span class="badge b-{15 if due==15 else 30}">Dia {due}</span></div>', unsafe_allow_html=True)
+                for r in sub:
+                    c1,c2,c3,c4 = st.columns([3,2,1,1])
+                    c1.markdown(f'<span style="font-size:13px">{r["label"]}</span>', unsafe_allow_html=True)
+                    c2.markdown(f'<span style="font-family:DM Mono,monospace;color:#16a34a;font-size:13px">{R(r["amount"])}</span>', unsafe_allow_html=True)
+                    if c3.button("✎", key=f"ei{r['id']}"):   st.session_state[f"ei{r['id']}"]=True
+                    if c4.button("✕", key=f"di{r['id']}"):
+                        db.del_income(r["id"]); LocalState.remove("income", r["id"])
+                    if st.session_state.get(f"ei{r['id']}"):
+                        with st.form(f"eif{r['id']}"):
+                            nl=st.text_input("Descrição",r["label"]); na=st.number_input("Valor",value=float(r["amount"]),step=10.)
+                            nd=st.selectbox("Dia",[15,30],index=0 if r["due_day"]==15 else 1)
+                            if st.form_submit_button("Salvar", width="stretch"):
+                                db.update_income(r["id"],nl,na,nd)
+                                LocalState.update("income", r["id"], label=nl, amount=na, due_day=nd)
+                                del st.session_state[f"ei{r['id']}"]; st.rerun()
+            st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total</span><span style="color:#16a34a;font-family:DM Mono,monospace">{R(t_inc)}</span></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<p style="color:#6b7280;font-size:13px">Nenhuma renda cadastrada.</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    with right:
+        st.markdown('<div class="card card-green">', unsafe_allow_html=True)
+        st.markdown('<div class="sec">+ Adicionar Entrada</div>', unsafe_allow_html=True)
+        with st.form("add_inc"):
+            l=st.text_input("Descrição","",placeholder="Ex: Salário Thiago…"); a=st.number_input("Valor (R$)",min_value=0.,step=100.); d_=st.selectbox("Dia (Ciclo)",[15,30])
+            if st.form_submit_button("Adicionar", width="stretch"):
+                if l and a>0: 
+                    rid = db.add_income(month,l,a,d_)
+                    LocalState.add("income", {"id":rid, "month":month, "label":l, "amount":a, "due_day":d_})
+        st.markdown('</div>', unsafe_allow_html=True)
+
+def tab_contas(month, d):
+    fix = d["fixed"]
+    t_fix = sum(r["amount"] for r in fix)
+    
+    bills = d["bills"]
+    templates = d["bill_templates"]
+    if db.generate_bills_from_templates(month, bills, templates) > 0:
+        LocalState.reload()
+    t_bills = sum(r["amount"] for r in bills)
+    pays = d["payments"]
+    
+    st.markdown(f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 14px"><div><h2 style="font-size:20px;font-weight:700;color:#1a2332;margin:0">Contas Fixas</h2><p style="color:#6b7280;font-size:12px;margin:3px 0 0">Propagadas para todos os meses</p></div><div style="font-size:20px;font-weight:700;color:#ef4444;font-family:DM Mono,monospace">{R(t_fix + t_bills)}</div></div>', unsafe_allow_html=True)
+    left,right=st.columns([1.3,1],gap="medium")
+    
+    with left:
         st.markdown('<div class="card card-red">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Gastos Fixos</div>', unsafe_allow_html=True)
-        for due in [15,30]:
-            sub=[r for r in fix if r["due_day"]==due]
-            if not sub: continue
-            st.markdown(f'<div style="margin:4px 0 4px"><span class="badge b-{15 if due==15 else 30}">Dia {due}</span></div>', unsafe_allow_html=True)
-            for r in sub:
+        st.markdown('<div class="sec">Suas Contas Fixas (Sempre iguais)</div>', unsafe_allow_html=True)
+        if fix:
+            for r in sorted(fix, key=lambda x: x["due_day"]):
                 c1,c2,c3,c4=st.columns([3,2,1,1])
-                c1.markdown(f'<div style="font-size:13px">{r["label"]}</div><span class="badge b-gray" style="font-size:9px">{r["category"]}</span>', unsafe_allow_html=True)
-                c2.markdown(f'<span style="font-family:DM Mono,monospace;color:#ef4444;font-size:13px">{R(r["amount"])}</span>', unsafe_allow_html=True)
+                c1.markdown(f'<div style="font-size:13px;font-weight:500">{r["label"]}</div><span class="badge b-{"15" if r["due_day"]==15 else "30"}" style="font-size:9px">{r["category"]} · Dia {r["due_day"]}</span>', unsafe_allow_html=True)
+                c2.markdown(f'<span style="font-family:DM Mono,monospace;color:#ef4444;font-size:13px;padding-top:4px;display:block">{R(r["amount"])}</span>', unsafe_allow_html=True)
                 if c3.button("✎",key=f"ef_{r['id']}"): st.session_state[f"ef_{r['id']}"]=True
                 if c4.button("✕",key=f"df_{r['id']}"): 
                     db.del_fixed(r["id"]); LocalState.remove("fixed", r["id"])
@@ -336,185 +348,16 @@ def tab_painel(month, d):
                         nl=st.text_input("Descrição",r["label"]); na=st.number_input("Valor",value=float(r["amount"]),step=5.)
                         nd=st.selectbox("Dia",[15,30],index=0 if r["due_day"]==15 else 1)
                         nc=st.selectbox("Categoria",CATS,index=CATS.index(r["category"]) if r["category"] in CATS else 0)
-                        if st.form_submit_button("Salvar"):
+                        if st.form_submit_button("Salvar", width="stretch"):
                             db.update_fixed(r["id"],nl,na,nd,nc)
                             LocalState.update("fixed", r["id"], label=nl, amount=na, due_day=nd, category=nc)
                             del st.session_state[f"ef_{r['id']}"]; st.rerun()
-        for label,value,color in [("💳 Cartão",cc,"#f59e0b"),("📱 Assinaturas",t_subs,"#8b5cf6"),("🏠 Contas",t_bills,"#ef4444"),("📤 Extras",t_ext,"#6b7280"),("🛡️ Seguros",t_ins,"#3b82f6"),("📈 Investimento",inv_this,"#16a34a"),("⚠️ Dívidas/mês",t_debt,"#dc2626")]:
-            if value>0:
-                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px;border-top:1px dashed var(--border)"><span>{label}</span><span style="font-family:DM Mono,monospace;color:{color}">{R(value)}</span></div>', unsafe_allow_html=True)
-        with st.expander("+ Adicionar gasto fixo"):
-            with st.form("add_fix"):
-                l=st.text_input("Descrição","",placeholder="Ex: Aluguel…"); a=st.number_input("Valor",min_value=0.,step=10.)
-                d_=st.selectbox("Venc.",[15,30]); ca=st.selectbox("Categoria",CATS)
-                if st.form_submit_button("Adicionar"):
-                    if l and a>0: 
-                        rid = db.add_fixed(month,l,a,d_,ca)
-                        LocalState.add("fixed", {"id":rid, "month":month, "label":l, "amount":a, "due_day":d_, "category":ca})
-        st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total saídas</span><span style="color:#ef4444;font-family:DM Mono,monospace">{R(t_gasto+t_debt)}</span></div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        cd1,cd2=st.columns([3,1])
-        cd1.markdown('<div class="sec" style="margin-bottom:6px">Diagnóstico</div>', unsafe_allow_html=True)
-        api_d = os.environ.get("ANTHROPIC_API_KEY","") or cfg.get("api_key","")
-        try: api_d = api_d or st.secrets.get("ANTHROPIC_API_KEY","")
-        except Exception: pass
-        if cd2.button("🔄",key="btn_diag",help="Atualizar IA"):
-            _run_diag(api_d,month,t_inc,t_gasto,t_debt,ef,ext,fix,subs,debts)
-        pct_g=(t_gasto+t_debt)/t_inc*100 if t_inc>0 else 0
-        ef_m2=round(ef/t_gasto,1) if t_gasto>0 else 0
-        total_dv=sum(r["remaining_amount"] for r in debts)
-        if t_inc>0:
-            if pct_g<=70:   st.markdown(f'<div class="diag-ok">✅ Gastos: {pct_g:.0f}% da renda</div>', unsafe_allow_html=True)
-            elif pct_g<=90: st.markdown(f'<div class="diag-warn">⚠️ Gastos: {pct_g:.0f}% — acima do ideal</div>', unsafe_allow_html=True)
-            else:           st.markdown(f'<div class="diag-crit">🚨 Gastos: {pct_g:.0f}% — situação crítica!</div>', unsafe_allow_html=True)
-        if ef_m2>=6:   st.markdown(f'<div class="diag-ok">✅ Reserva: {ef_m2} meses</div>', unsafe_allow_html=True)
-        elif ef_m2>=3: st.markdown(f'<div class="diag-warn">⚠️ Reserva: {ef_m2} meses (meta: 6)</div>', unsafe_allow_html=True)
-        elif ef>0:     st.markdown(f'<div class="diag-crit">🚨 Reserva: apenas {ef_m2} meses</div>', unsafe_allow_html=True)
-        if total_dv==0:          st.markdown('<div class="diag-ok">✅ Sem dívidas!</div>', unsafe_allow_html=True)
-        elif total_dv<t_inc*3:   st.markdown(f'<div class="diag-warn">⚠️ Dívidas: {R(total_dv)}</div>', unsafe_allow_html=True)
-        else:                    st.markdown(f'<div class="diag-crit">🚨 Dívidas: {R(total_dv)}</div>', unsafe_allow_html=True)
-        dk=f"diag_{month}"
-        if dk in st.session_state:
-            st.markdown(f'<div style="background:#f8fafc;border-left:3px solid #00c896;border-radius:8px;padding:10px 14px;margin-top:6px;font-size:13px;line-height:1.7">{st.session_state[dk].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<p style="color:#9ca3af;font-size:11px;margin-top:4px">Clique 🔄 para análise personalizada</p>', unsafe_allow_html=True)
+            st.markdown('<p style="color:#6b7280;font-size:13px">Nenhuma conta fixa.</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        if goals:
-            st.markdown('<div class="card card-green">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Metas</div>', unsafe_allow_html=True)
-            for g in goals[:3]:
-                pct=(g["current_amount"]/g["target_amount"]*100) if g["target_amount"]>0 else 0
-                st.markdown(f'<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span style="font-weight:500">{g["label"]}</span><span style="color:#6b7280">{R(g["current_amount"])} / {R(g["target_amount"])}</span></div>{prog_bar(pct)}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    _tab_fluxo_ciclos(month, d)
-
-def _run_diag(api_key, month, t_inc, t_gasto, t_debt, ef, ext, fix, subs, debts):
-    if not api_key:
-        st.warning("Configure a chave API em ⚙️ Configurações."); return
-    import anthropic as _ant
-    from collections import defaultdict
-    cat_g=defaultdict(float)
-    for r in fix:  cat_g[r["category"]]+=r["amount"]
-    for r in ext:  cat_g[r["category"]]+=r["amount"]
-    for r in subs:
-        if r["active"]: cat_g[r["category"]]+=r["amount"]
-    cat_txt="\n".join([f"  · {k}: R${v:.0f}" for k,v in sorted(cat_g.items(),key=lambda x:-x[1])])
-    total_debt=sum(r["remaining_amount"] for r in debts)
-    sobra=t_inc-t_gasto-t_debt
-    pct=(t_gasto/t_inc*100) if t_inc>0 else 0
-    ef_m=round(ef/t_gasto,1) if t_gasto>0 else 0
-    prompt=f"MES: {ML(month)} | Renda: R${t_inc:.0f} | Gastos: R${t_gasto:.0f} ({pct:.0f}%) | Sobra: R${sobra:.0f}\nReserva: R${ef:.0f} ({ef_m} meses) | Dividas: R${total_debt:.0f}\nGastos:\n{cat_txt}"
-    system="Consultor financeiro da família Peixoto, direto e afetuoso. 3-4 linhas personalizadas. Se gastaram muito numa categoria: diga o valor e dê dica. Se têm sobra: sugira algo positivo. 'Vocês', valores reais, texto corrido, português informal."
-    client=_ant.Anthropic(api_key=api_key)
-    with st.spinner("Analisando..."):
-        try:
-            r=client.messages.create(model="claude-haiku-4-5-20251001",max_tokens=300,system=system,messages=[{"role":"user","content":prompt}])
-            st.session_state[f"diag_{month}"]=r.content[0].text; st.rerun()
-        except Exception as e: st.error(f"Erro: {e}")
-
-def _fluxo_ciclo(month, d, ciclo):
-    inc=d["income"]; fix=d["fixed"]; bills=d["bills"]; subs=d["subs"]
-    cc_all=d["cc_all"]; debts=d["debts"]; invs=d["investments"]; ins=d["insurance"]
-    cc_total=db.cc_total_from_data(cc_all, month)
-
-    def _in(day): return day<=15 if ciclo==15 else day>15
-
-    renda_items=[r for r in inc if r["due_day"]==ciclo]
-    t_renda=sum(r["amount"] for r in renda_items)
-    gasto_items=[]
-    for r in fix:
-        if _in(r["due_day"]): gasto_items.append(("fixed",r["id"],r["label"],r["amount"],r["due_day"],"Gasto Fixo",r["category"]))
-    for r in bills:
-        if _in(r["due_day"]): gasto_items.append(("bill",r["id"],r["label"],r["amount"],r["due_day"],"Conta",r["category"]))
-    for r in subs:
-        if r["active"] and _in(r["billing_day"]): gasto_items.append(("sub",r["id"],r["label"],r["amount"],r["billing_day"],"Assinatura",r["category"]))
-    if ciclo==30 and cc_total>0:
-        gasto_items.append(("cc_total",0,"Cartão de Crédito",cc_total,30,"Cartão",""))
-    for debt in debts:
-        dd=debt.get("due_day",30)
-        if _in(dd): gasto_items.append(("debt",debt["id"],debt["label"],debt["monthly_payment"],dd,"Dívida",""))
-    for i in ins:
-        dd=i.get("due_day",30)
-        if _in(dd): gasto_items.append(("ins",i["id"],f"Seguro: {i['label']}",i["monthly_cost"],dd,"Seguro",""))
-    inv_this=next((r for r in invs if r["month"]==month),None)
-    if inv_this:
-        dd=inv_this.get("due_day",30)
-        if _in(dd): gasto_items.append(("inv",inv_this["id"],f"Investimento ({inv_this['investment_type']})",float(inv_this["amount_added"]),dd,"Investimento",""))
-    t_gastos=sum(x[3] for x in gasto_items)
-    return t_renda, t_gastos, t_renda-t_gastos, renda_items, gasto_items
-
-def _tab_fluxo_ciclos(month, d):
-    st.markdown("---")
-    st.markdown('<div class="sec" style="font-size:13px;margin-bottom:12px">💡 Fluxo de Caixa por Ciclo</div>', unsafe_allow_html=True)
-    r15,g15,s15,ri15,gi15=_fluxo_ciclo(month,d,15)
-    r30,g30,s30,ri30,gi30=_fluxo_ciclo(month,d,30)
-    c1,c2,c3,c4,c5,c6=st.columns(6,gap="small")
-    c1.markdown(f'<div class="mc"><div style="font-size:9px;color:#1d4ed8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Renda dia 15</div><div style="font-size:16px;font-weight:700;color:#16a34a;font-family:DM Mono,monospace">{R(r15)}</div></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="mc"><div style="font-size:9px;color:#1d4ed8;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Gastos até 15</div><div style="font-size:16px;font-weight:700;color:#ef4444;font-family:DM Mono,monospace">{R(g15)}</div></div>', unsafe_allow_html=True)
-    cor15="#16a34a" if s15>=0 else "#ef4444"
-    c3.markdown(f'<div class="mc" style="border-top:3px solid {cor15}"><div style="font-size:9px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Sobra dia 15</div><div style="font-size:16px;font-weight:700;color:{cor15};font-family:DM Mono,monospace">{R(s15)}</div></div>', unsafe_allow_html=True)
-    c4.markdown(f'<div class="mc"><div style="font-size:9px;color:#7c3aed;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Renda dia 30</div><div style="font-size:16px;font-weight:700;color:#16a34a;font-family:DM Mono,monospace">{R(r30)}</div></div>', unsafe_allow_html=True)
-    c5.markdown(f'<div class="mc"><div style="font-size:9px;color:#7c3aed;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Gastos dia 30</div><div style="font-size:16px;font-weight:700;color:#ef4444;font-family:DM Mono,monospace">{R(g30)}</div></div>', unsafe_allow_html=True)
-    cor30="#16a34a" if s30>=0 else "#ef4444"
-    c6.markdown(f'<div class="mc" style="border-top:3px solid {cor30}"><div style="font-size:9px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Sobra dia 30</div><div style="font-size:16px;font-weight:700;color:{cor30};font-family:DM Mono,monospace">{R(s30)}</div></div>', unsafe_allow_html=True)
-    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
-    tab_c15,tab_c30=st.tabs(["📅 Ciclo Dia 15","📅 Ciclo Dia 30"])
-    type_colors={"Gasto Fixo":"b-15","Conta":"b-red","Cartão":"b-amber","Assinatura":"b-blue","Dívida":"b-red","Seguro":"b-blue","Investimento":"b-green"}
-    for tab_c,ciclo,renda_items,gasto_items,t_renda,t_gastos,sobra in [(tab_c15,15,ri15,gi15,r15,g15,s15),(tab_c30,30,ri30,gi30,r30,g30,s30)]:
-        with tab_c:
-            left,right=st.columns([1,1],gap="medium")
-            with left:
-                st.markdown('<div class="card card-green">', unsafe_allow_html=True)
-                st.markdown(f'<div class="sec">Renda — Dia {ciclo}</div>', unsafe_allow_html=True)
-                if renda_items:
-                    for r in renda_items:
-                        st.markdown(f'<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span>{r["label"]}</span><span style="font-family:DM Mono,monospace;color:#16a34a">{R(r["amount"])}</span></div>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f'<p style="color:#6b7280;font-size:13px">Nenhuma renda para o dia {ciclo}.</p>', unsafe_allow_html=True)
-                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total renda</span><span style="color:#16a34a;font-family:DM Mono,monospace">{R(t_renda)}</span></div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            with right:
-                st.markdown('<div class="card card-red">', unsafe_allow_html=True)
-                st.markdown(f'<div class="sec">Contas — Ciclo Dia {ciclo}</div>', unsafe_allow_html=True)
-                other=30 if ciclo==15 else 15
-                for (itype,iid,ilabel,iamt,iday,icat,isubcat) in gasto_items:
-                    badge=type_colors.get(icat,"b-gray")
-                    c1_,c2_,c3_=st.columns([3.5,1.5,0.8])
-                    c1_.markdown(f'<div style="font-size:12px;font-weight:500">{ilabel}</div><span class="badge {badge}" style="font-size:9px">{icat}</span>', unsafe_allow_html=True)
-                    c2_.markdown(f'<span style="font-family:DM Mono,monospace;color:#ef4444;font-size:13px">{R(iamt)}</span>', unsafe_allow_html=True)
-                    can_move=itype in ("fixed","bill","sub","debt","ins","inv")
-                    if can_move and iid:
-                        if c3_.button(f"→{other}",key=f"mv_{itype}_{iid}_{ciclo}"):
-                            if itype=="fixed":   db.update_fixed(iid,ilabel,iamt,other,isubcat or "Outros")
-                            elif itype=="bill":  db.upsert_bill(month,ilabel,iamt,isubcat or "Utilidades",other)
-                            elif itype=="sub":   db.update_sub_billing_day(iid,other)
-                            elif itype=="debt":  db.update_debt_due_day(iid,other)
-                            elif itype=="ins":   db.update_insurance_due_day(iid,other)
-                            elif itype=="inv":   db._exec("UPDATE investments SET due_day=%s WHERE id=%s",(other,iid))
-                            LocalState.reload()
-                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total gastos</span><span style="color:#ef4444;font-family:DM Mono,monospace">{R(t_gastos)}</span></div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
-            cor_s="#16a34a" if sobra>=0 else "#ef4444"
-            bg="#f0fdf4" if sobra>=0 else "#fef2f2"
-            bdr="#bbf7d0" if sobra>=0 else "#fecaca"
-            st.markdown(f'<div style="background:{bg};border:1px solid {bdr};border-top:3px solid {cor_s};border-radius:12px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:{cor_s};margin-bottom:4px">{"✅" if sobra>=0 else "⚠️"} Sobra do ciclo dia {ciclo}</div><div style="font-size:11px;color:{cor_s};opacity:.8">{R(t_renda)} renda — {R(t_gastos)} gastos</div></div><div style="font-size:24px;font-weight:700;color:{cor_s};font-family:DM Mono,monospace">{R(sobra)}</div></div>', unsafe_allow_html=True)
-
-def tab_contas(month, d):
-    bills     = d["bills"]
-    templates = d["bill_templates"]
-    if db.generate_bills_from_templates(month, bills, templates) > 0:
-        LocalState.reload()
-    t_bills = sum(r["amount"] for r in bills)
-    pays    = d["payments"]
-    st.markdown(f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 14px"><div><h2 style="font-size:20px;font-weight:700;color:#1a2332;margin:0">Contas Fixas</h2><p style="color:#6b7280;font-size:12px;margin:3px 0 0">Água, luz, telefone, internet</p></div><div style="font-size:20px;font-weight:700;color:#ef4444;font-family:DM Mono,monospace">{R(t_bills)}</div></div>', unsafe_allow_html=True)
-    left,right=st.columns([1.3,1],gap="medium")
-    with left:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="sec">Contas de {ML(month)}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="sec">Contas Variáveis (Água, Luz) - Mês {ML(month)}</div>', unsafe_allow_html=True)
         if bills:
             for r in bills:
                 paid=db.is_paid_fast(pays,month,"bill",r["id"])
@@ -526,13 +369,37 @@ def tab_contas(month, d):
                     LocalState.update("bills", r["id"], amount=nv)
                 if c4.button("✅" if paid else "⬜",key=f"bp{r['id']}"):
                     LocalState.toggle_payment(month, "bill", r["id"], r["amount"], not paid)
-            st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total</span><span style="color:#ef4444;font-family:DM Mono,monospace">{R(t_bills)}</span></div>', unsafe_allow_html=True)
         else:
-            st.markdown('<p style="color:#6b7280;font-size:13px">Nenhuma conta. Adicione modelos →</p>', unsafe_allow_html=True)
+            st.markdown('<p style="color:#6b7280;font-size:13px">Nenhuma conta variável.</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="card card-red">', unsafe_allow_html=True)
+        st.markdown('<div class="sec">+ Adicionar Conta Fixa</div>', unsafe_allow_html=True)
+        with st.form("add_fix"):
+            l=st.text_input("Descrição","",placeholder="Ex: Aluguel…"); a=st.number_input("Valor",min_value=0.,step=10.)
+            d_=st.selectbox("Venc. (Ciclo)",[15,30]); ca=st.selectbox("Categoria",CATS)
+            if st.form_submit_button("Adicionar", width="stretch"):
+                if l and a>0: 
+                    rid = db.add_fixed(month,l,a,d_,ca)
+                    LocalState.add("fixed", {"id":rid, "month":month, "label":l, "amount":a, "due_day":d_, "category":ca})
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<div class="sec">Criar Modelo (Conta que varia o valor)</div>', unsafe_allow_html=True)
+        with st.form("add_tpl"):
+            l=st.text_input("Nome","",placeholder="Ex: Conta de Luz"); a=st.number_input("Estimativa (R$)",min_value=0.,step=5.)
+            ca=st.selectbox("Categoria",CATS)
+            dd=st.number_input("Dia",min_value=1,max_value=31,value=10)
+            if st.form_submit_button("Criar", width="stretch"):
+                if l: 
+                    rid = db.add_bill_template(l,a,ca,int(dd))
+                    LocalState.add("bill_templates", {"id":rid, "label":l, "estimated_amount":a, "category":ca, "due_day":int(dd), "active":1})
+        st.markdown('</div>', unsafe_allow_html=True)
+        
         if templates:
             st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Modelos recorrentes</div>', unsafe_allow_html=True)
+            st.markdown('<div class="sec">Modelos Ativos</div>', unsafe_allow_html=True)
             for t in templates:
                 c1,c2,c3=st.columns([3,2,1])
                 c1.markdown(f'<span style="font-size:13px">{t["label"]}</span><br><span class="badge b-gray">{t["category"]}</span>', unsafe_allow_html=True)
@@ -540,36 +407,14 @@ def tab_contas(month, d):
                 if c3.button("✕",key=f"dtpl{t['id']}"): 
                     db.del_bill_template(t["id"]); LocalState.remove("bill_templates", t["id"])
             st.markdown('</div>', unsafe_allow_html=True)
-    with right:
-        st.markdown('<div class="card card-red">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Lançar conta este mês</div>', unsafe_allow_html=True)
-        with st.form("add_bm"):
-            l=st.text_input("Conta","",placeholder="Ex: Conta de Luz"); a=st.number_input("Valor (R$)",min_value=0.,step=1.)
-            ca=st.selectbox("Categoria",["Utilidades","Moradia","Comunicação","Outros"])
-            dd=st.number_input("Dia venc.",min_value=1,max_value=31,value=10)
-            if st.form_submit_button("Adicionar", width="stretch"):
-                if l and a>0: 
-                    db.upsert_bill(month,l,a,ca,int(dd)); LocalState.reload()
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Criar modelo recorrente</div>', unsafe_allow_html=True)
-        with st.form("add_tpl"):
-            l=st.text_input("Nome","",placeholder="Ex: Conta de Água"); a=st.number_input("Estimativa (R$)",min_value=0.,step=5.)
-            ca=st.selectbox("Categoria",["Utilidades","Moradia","Comunicação","Outros"])
-            dd=st.number_input("Dia",min_value=1,max_value=31,value=10)
-            if st.form_submit_button("Criar", width="stretch"):
-                if l: 
-                    rid = db.add_bill_template(l,a,ca,int(dd))
-                    LocalState.add("bill_templates", {"id":rid, "label":l, "estimated_amount":a, "category":ca, "due_day":int(dd), "active":1})
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def tab_planilha(month, d):
     inc   = d["income"];  fix=d["fixed"];  bills=d["bills"]
     cc_its= db.cc_items_from_data(d["cc_all"],month)
     subs  = [r for r in d["subs"] if r["active"]]
-    ext   = d["extras"]; debts=d["debts"]; ins=d["insurance"]
-    invs  = d["investments"]; pays=d["payments"]
-    inv_this=next((r for r in invs if r["month"]==month),None)
+    ext   = d["extras"]; debts=d["debts"]
+    pays=d["payments"]
+    
     t_inc =sum(r["amount"] for r in inc)
     all_exp=[]
     for r in fix:    all_exp.append(("fixed",r["id"],r["label"],r["amount"],r["due_day"],"Gasto Fixo"))
@@ -578,8 +423,7 @@ def tab_planilha(month, d):
     for r in subs:   all_exp.append(("sub",r["id"],r["label"],r["amount"],r["billing_day"],"Assinatura"))
     for r in ext:    all_exp.append(("ext",r["id"],r["label"],r["amount"],0,"Saída"))
     for debt in debts: all_exp.append(("debt",debt["id"],debt["label"],debt["monthly_payment"],debt.get("due_day",30),"Dívida"))
-    for i in ins:    all_exp.append(("ins",i["id"],f"Seguro: {i['label']}",i["monthly_cost"],i.get("due_day",30),"Seguro"))
-    if inv_this:     all_exp.append(("inv",inv_this["id"],f"Investimento ({inv_this['investment_type']})",float(inv_this["amount_added"]),inv_this.get("due_day",30),"Investimento"))
+    
     all_exp.sort(key=lambda x:x[4])
     t_exp  = sum(x[3] for x in all_exp)
     t_paid = sum(p["amount"] for p in pays if p["paid"])
@@ -594,7 +438,7 @@ def tab_planilha(month, d):
     st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
 
     left,right=st.columns([1.6,1],gap="medium")
-    type_colors={"Gasto Fixo":"b-15","Conta":"b-red","Cartão":"b-amber","Assinatura":"b-blue","Saída":"b-gray","Dívida":"b-red","Seguro":"b-blue","Investimento":"b-green"}
+    type_colors={"Gasto Fixo":"b-15","Conta":"b-red","Cartão":"b-amber","Assinatura":"b-blue","Saída":"b-gray","Dívida":"b-red"}
     with left:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Todas as saídas</div>', unsafe_allow_html=True)
@@ -807,111 +651,55 @@ def _parse_fatura(api_key, text, month, card_name):
         st.success(f"✅ {count} item(s) importado(s)!"); LocalState.reload()
     except Exception as e: st.error(f"Erro: {e}")
 
-def tab_investimentos(month, d):
-    invs=d["investments"]; ins=d["insurance"]; cfg=d["config"]
-    annual_rate=float(cfg.get("inv_rate","12") or 12)
-    monthly_contrib=float(cfg.get("inv_contrib","0") or 0)
-    current_total=db.investment_last_total(invs)
-    sub_inv,sub_seg=st.tabs(["📈 Investimentos","🛡️ Seguros"])
-    with sub_inv:
-        cols=st.columns(4,gap="small")
-        with cols[0]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#16a34a">{R(current_total)}</div><div class="mc-label">Total acumulado</div></div>', unsafe_allow_html=True)
-        for idx,(yr,col) in enumerate([(5,"#3b82f6"),(10,"#8b5cf6"),(20,"#f59e0b")]):
-            with cols[idx+1]:
-                pv=db.investment_projection(current_total,monthly_contrib,annual_rate,yr)
-                st.markdown(f'<div class="mc"><div class="mc-val" style="color:{col}">{R(pv)}</div><div class="mc-label">Projeção {yr} anos</div></div>', unsafe_allow_html=True)
-        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        fig=go.Figure()
-        if invs:
-            fig.add_trace(go.Bar(name="Acumulado",x=[ML(r["month"]) for r in invs],y=[r["total_accumulated"] for r in invs],marker_color="#00c896",text=[R(r["total_accumulated"]) for r in invs],textposition="outside",textfont_size=9))
-        for yr,col in [(5,"#3b82f6"),(10,"#8b5cf6"),(15,"#f59e0b"),(20,"#ef4444")]:
-            pv=db.investment_projection(current_total,monthly_contrib,annual_rate,yr)
-            fig.add_trace(go.Bar(name=f"{yr} anos",x=[f"→ {yr} anos"],y=[pv],marker_color=col,text=[R(pv)],textposition="outside",textfont_size=9))
-        fig.update_layout(height=280,paper_bgcolor="white",plot_bgcolor="white",margin=dict(t=20,b=20,l=0,r=0),legend=dict(orientation="h",y=-0.2,font_size=11),xaxis=dict(tickfont_size=10,gridcolor="#f3f4f6"),yaxis=dict(tickfont_size=10,gridcolor="#f3f4f6",tickformat=",.0f"),font_family="Inter",barmode="group")
-        st.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False})
-        left,right=st.columns([1.2,1],gap="medium")
-        with left:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Histórico</div>', unsafe_allow_html=True)
-            if invs:
-                st.markdown('<table class="tbl"><thead><tr><th>Mês</th><th>Aportado</th><th>Origem</th><th>Total</th><th>Tipo</th></tr></thead><tbody>', unsafe_allow_html=True)
-                for r in reversed(invs):
-                    src='<span class="badge b-green">Renda</span>' if "Renda do mês" in r.get("investment_source","") else '<span class="badge b-blue">Guardado</span>'
-                    st.markdown(f'<tr><td>{ML(r["month"])}</td><td style="font-family:DM Mono,monospace;color:#16a34a">{R(r["amount_added"])}</td><td>{src}</td><td style="font-family:DM Mono,monospace;font-weight:600">{R(r["total_accumulated"])}</td><td><span class="badge b-gray">{r["investment_type"]}</span></td></tr>', unsafe_allow_html=True)
-                st.markdown('</tbody></table>', unsafe_allow_html=True)
-                for r in invs:
-                    if st.button(f"✕ {ML(r['month'])}",key=f"del_inv_{r['id']}"): 
-                        db.del_investment(r["id"]); LocalState.remove("investments", r["id"])
-            else:
-                st.markdown('<p style="color:#6b7280;font-size:13px">Nenhum aporte.</p>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        with right:
-            st.markdown('<div class="card card-green">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Registrar Aporte</div>', unsafe_allow_html=True)
-            with st.form("add_inv"):
-                sm=st.text_input("Mês (AAAA-MM)",value=month); aad=st.number_input("Valor aportado (R$)",min_value=0.,step=100.)
-                source=st.selectbox("Origem",["Renda do mês (salário/rendimento)","Renda guardada (já estava investida)"])
-                ciclo_inv=st.selectbox("Ciclo",[30,15]); tp=st.selectbox("Tipo",["Renda Fixa","Tesouro Direto","CDB","LCI/LCA","FII","Ações","Previdência","Cripto","Outros"])
-                auto_total=current_total+aad if "Renda do mês" in source else current_total
-                if aad>0: st.info(f"Total calculado: {R(auto_total)}")
-                override=st.number_input("Total acumulado real (R$)",value=float(auto_total),step=100.); nt_=st.text_input("Observações","")
-                if st.form_submit_button("Salvar", width="stretch"):
-                    if aad>0: 
-                        db.upsert_investment(sm,aad,float(override),tp,source,int(ciclo_inv),nt_)
-                        LocalState.reload()
-                    else: st.warning("Informe o valor.")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Parâmetros Projeção</div>', unsafe_allow_html=True)
-            with st.form("inv_cfg"):
-                nc=st.number_input("Aporte mensal planejado (R$)",value=float(monthly_contrib),step=100.)
-                nr=st.number_input("Taxa anual esperada (%)",value=float(annual_rate),step=0.5)
-                if st.form_submit_button("Atualizar", width="stretch"):
-                    db.set_config("inv_contrib",str(nc)); db.set_config("inv_rate",str(nr))
-                    LocalState.reload()
-            st.markdown('</div>', unsafe_allow_html=True)
+def tab_guardado(month, d):
+    # Calcula a sobra do mês passado dinamicamente
+    prev_month = prev_m(month)
+    prev_leftover = LocalState.get_leftover(prev_month)
+    
+    # Pega os guardados manuais deste mês
+    invs = [r for r in d["investments"] if r["month"] == month]
+    man_saved = sum(float(r["amount_added"]) for r in invs)
+    
+    total_mes = man_saved + (prev_leftover if prev_leftover > 0 else 0)
 
-    with sub_seg:
-        t_ins=db.insurance_total_from_data(ins)
-        cols=st.columns(3,gap="small")
-        with cols[0]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#3b82f6">{len(ins)}</div><div class="mc-label">Seguros ativos</div></div>', unsafe_allow_html=True)
-        with cols[1]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#ef4444">{R(t_ins)}</div><div class="mc-label">Custo mensal</div></div>', unsafe_allow_html=True)
-        with cols[2]: st.markdown(f'<div class="mc"><div class="mc-val" style="color:#f59e0b">{R(t_ins*12)}</div><div class="mc-label">Custo anual</div></div>', unsafe_allow_html=True)
-        st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
-        pays=d["payments"]
-        left,right=st.columns([1.3,1],gap="medium")
-        with left:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Seus Seguros</div>', unsafe_allow_html=True)
-            if ins:
-                for r in ins:
-                    paid=db.is_paid_fast(pays,month,"ins",r["id"])
-                    c1,c2,c3,c4=st.columns([3.5,1,0.8,0.8])
-                    c1.markdown(f'<div style="padding:6px 0"><div style="font-weight:600;font-size:13px">{r["label"]} {"✅" if paid else ""}</div><div style="font-size:11px;color:#6b7280">🏦 {r["provider"] or "?"} · 🛡️ {r["coverage"] or "?"}</div><div style="font-family:DM Mono,monospace;font-weight:700;color:#ef4444;font-size:13px">{R(r["monthly_cost"])}/mês</div><span class="badge b-{"15" if r.get("due_day",30)==15 else "30"}" style="font-size:9px">Dia {r.get("due_day",30)}</span></div>', unsafe_allow_html=True)
-                    if c2.button("✅" if paid else "⬜",key=f"pin{r['id']}"): 
-                        LocalState.toggle_payment(month, "ins", r["id"], r["monthly_cost"], not paid)
-                    other_d=15 if r.get("due_day",30)==30 else 30
-                    if c3.button(f"→{other_d}",key=f"mvin{r['id']}"): 
-                        db.update_insurance_due_day(r["id"],other_d); LocalState.update("insurance", r["id"], due_day=other_d)
-                    if c4.button("✕",key=f"din{r['id']}"): 
-                        db.del_insurance(r["id"]); LocalState.remove("insurance", r["id"])
-            else:
-                st.markdown('<p style="color:#6b7280;font-size:13px">Nenhum seguro.</p>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        with right:
-            st.markdown('<div class="card card-blue">', unsafe_allow_html=True)
-            st.markdown('<div class="sec">Cadastrar Seguro</div>', unsafe_allow_html=True)
-            with st.form("add_ins"):
-                l=st.text_input("Tipo","",placeholder="Ex: Seguro de Vida"); tp_ins=st.selectbox("Categoria",["Vida","Saúde","Carro","Casa/Residencial","Viagem","Outros"])
-                pv_=st.text_input("Seguradora","",placeholder="Ex: Bradesco Seguros"); ap=st.text_input("Nº Apólice",""); cv=st.text_input("Cobertura","",placeholder="Ex: R$ 500k")
-                mc=st.number_input("Custo mensal (R$)",min_value=0.,step=10.); ciclo_seg=st.selectbox("Ciclo",[30,15]); nt_=st.text_input("Obs.","")
-                if st.form_submit_button("Cadastrar", width="stretch"):
-                    if l and mc>0:
-                        notes=f"Tipo: {tp_ins}"+(f" · Apólice: {ap}" if ap else "")+(f" · {nt_}" if nt_ else "")
-                        rid = db.add_insurance(l,pv_,mc,cv,int(ciclo_seg),notes)
-                        LocalState.add("insurance", {"id":rid, "label":l, "provider":pv_, "monthly_cost":mc, "coverage":cv, "due_day":int(ciclo_seg)})
-                    else: st.warning("Preencha nome e custo.")
-            st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0 14px"><div><h2 style="font-size:20px;font-weight:700;color:#1a2332;margin:0">O Porquinho 🐷</h2><p style="color:#6b7280;font-size:12px;margin:3px 0 0">Sobra do mês passado + Guardado carimbado</p></div><div style="font-size:20px;font-weight:700;color:#3b82f6;font-family:DM Mono,monospace">{R(total_mes)}</div></div>', unsafe_allow_html=True)
+    
+    left,right=st.columns([1.2,1],gap="medium")
+    with left:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="sec">Sobra Automática ({ML(prev_month)})</div>', unsafe_allow_html=True)
+        if prev_leftover > 0:
+            st.markdown(f'<div style="padding:10px 0;display:flex;justify-content:space-between;align-items:center"><span style="font-size:14px;color:#374151">Saldo que não foi gasto no mês passado</span><span style="font-family:DM Mono,monospace;font-size:18px;color:#16a34a;font-weight:600">+{R(prev_leftover)}</span></div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div style="padding:10px 0;display:flex;justify-content:space-between;align-items:center"><span style="font-size:14px;color:#9ca3af">Não houve sobra no mês passado.</span><span style="font-family:DM Mono,monospace;font-size:18px;color:#9ca3af;font-weight:600">{R(0)}</span></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="card card-blue">', unsafe_allow_html=True)
+        st.markdown('<div class="sec">Guardado com Destino Carimbado</div>', unsafe_allow_html=True)
+        if invs:
+            st.markdown('<table class="tbl"><thead><tr><th>Destino/Motivo</th><th>Valor</th></tr></thead><tbody>', unsafe_allow_html=True)
+            for r in invs:
+                st.markdown(f'<tr><td>{r["notes"]}</td><td style="font-family:DM Mono,monospace;color:#3b82f6">{R(r["amount_added"])}</td></tr>', unsafe_allow_html=True)
+            st.markdown('</tbody></table>', unsafe_allow_html=True)
+            for r in invs:
+                if st.button(f"✕ {r['notes']}",key=f"del_inv_{r['id']}"): 
+                    db.del_guardado(r["id"]); LocalState.remove("investments", r["id"])
+        else:
+            st.markdown('<p style="color:#6b7280;font-size:13px">Nenhum valor carimbado este mês.</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="card card-blue">', unsafe_allow_html=True)
+        st.markdown('<div class="sec">+ Separar Dinheiro</div>', unsafe_allow_html=True)
+        with st.form("add_inv"):
+            nt_=st.text_input("Destino", placeholder="Ex: 300 para Isa, 100 mercado...")
+            aad=st.number_input("Valor (R$)",min_value=0.,step=100.)
+            if st.form_submit_button("Guardar", width="stretch"):
+                if aad>0 and nt_: 
+                    rid = db.add_guardado(month, aad, nt_)
+                    LocalState.add("investments", {"id":rid, "month":month, "amount_added":aad, "notes":nt_})
+                else: st.warning("Informe o destino e o valor.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def tab_dividas(d):
     debts=d["debts"]
@@ -1022,10 +810,10 @@ def tab_assistente(month, d):
     key=f"ai_{month}"
     if key in st.session_state:
         st.markdown(f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #00c896;border-radius:12px;padding:22px 26px;margin-top:18px;font-size:14px;line-height:1.8;color:#374151;max-width:780px;margin-inline:auto">{st.session_state[key].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
-        qs=["Como pagar minhas dívidas mais rápido?","Quanto devo investir por mês?","Onde estou desperdiçando dinheiro?","Como montar minha reserva de emergência?"]
-        qc=st.columns(2)
+        qs=["Como pagar minhas dívidas mais rápido?","Onde estou desperdiçando dinheiro?","Dicas de planejamento para a família"]
+        qc=st.columns(3)
         for i,q in enumerate(qs):
-            if qc[i%2].button(q,key=f"q{i}"):
+            if qc[i%3].button(q,key=f"q{i}"):
                 _run_ai_q(api_key,q,month,t_inc,t_fix+cc+t_subs+t_ext,t_debt_t,t_inv,ef)
     if f"ai_q_{month}" in st.session_state:
         st.markdown(f'<div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;margin-top:10px;font-size:13px;line-height:1.7;max-width:780px;margin-inline:auto">{st.session_state[f"ai_q_{month}"].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
@@ -1036,7 +824,7 @@ def _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_i
     d_txt="\n".join([f"  · {d['label']}: R${d['remaining_amount']:.0f} rest, {R(d['monthly_payment'])}/mês, {d['interest_rate']:.1f}%a.m." for d in debts]) or "  Nenhuma"
     s_txt="\n".join([f"  · {s['label']}: {R(s['amount'])}/mês" for s in subs if s["active"]]) or "  Nenhuma"
     prompt=f"""DADOS — {ML(month)}: Renda: R${t_inc:.0f} | Gastos: R${t_fix+cc+t_subs+t_ext:.0f} ({((t_fix+cc+t_subs+t_ext)/t_inc*100 if t_inc>0 else 0):.0f}%) | Sobra: R${t_inc-t_fix-cc-t_subs-t_ext-t_debt_m:.0f}
-Dívidas/mês: R${t_debt_m:.0f} | Total dívidas: R${t_debt_t:.0f} | Investido: R${t_inv:.0f} | Reserva: R${ef:.0f}
+Dívidas/mês: R${t_debt_m:.0f} | Total dívidas: R${t_debt_t:.0f} | Porquinho: R${t_inv:.0f}
 Assinaturas: {s_txt} | Dívidas: {d_txt} | Metas: {g_txt}"""
     system="Consultor financeiro da família Peixoto, estilo Bruno Perini/Primo Rico. Direto, focado em resultado.\nESTRUTURA: 1.📊 Diagnóstico (3 linhas) 2.🚨 Problemas (max 3, valores reais) 3.💡 Plano (5 ações priorizadas) 4.🎯 Meta do mês (1 ação AGORA) 5.📈 Em 12 meses\nMax 500 palavras. Português informal."
     client=_ant.Anthropic(api_key=api_key)
@@ -1048,7 +836,7 @@ Assinaturas: {s_txt} | Dívidas: {d_txt} | Metas: {g_txt}"""
 
 def _run_ai_q(api_key,question,month,t_inc,t_gasto,t_debt,t_inv,ef):
     import anthropic as _ant
-    ctx=f"Renda: R${t_inc:.0f} · Gastos: R${t_gasto:.0f} · Dívidas: R${t_debt:.0f} · Investido: R${t_inv:.0f} · Reserva: R${ef:.0f}"
+    ctx=f"Renda: R${t_inc:.0f} · Gastos: R${t_gasto:.0f} · Dívidas: R${t_debt:.0f} · Porquinho: R${t_inv:.0f}"
     client=_ant.Anthropic(api_key=api_key)
     with st.spinner("..."):
         try:
@@ -1076,10 +864,6 @@ def tab_config(d):
         if st.button("↩ Desfazer última ação", width="stretch"):
             ok,msg=db.undo_last(); (st.success if ok else st.warning)(msg); LocalState.reload()
         st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Schema SQL (Supabase)</div>', unsafe_allow_html=True)
-        st.code(db.SCHEMA_SQL,language="sql")
-        st.markdown('</div>', unsafe_allow_html=True)
     with c2:
         st.markdown('<div class="card card-green">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Chave API Anthropic</div>', unsafe_allow_html=True)
@@ -1093,8 +877,8 @@ def tab_config(d):
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Banco de dados</div>', unsafe_allow_html=True)
-        st.markdown('<div class="diag-ok">🟢 Supabase + Optimistic UI (Zero Latency)</div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">10.0 — Lightning Edition</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="diag-ok">🟢 Supabase + Optimistic UI + AutoPropagação</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">11.0 — Family Edition</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         if st.button("🔄 Forçar recarga do banco", width="stretch"):
             LocalState.reload()
@@ -1129,43 +913,20 @@ def main():
         st.session_state.month = datetime.now().strftime("%Y-%m")
     month = sidebar(st.session_state.month)
 
-    # ── Mágica: Puxa o cache da RAM instantaneamente
+    # ── Mágica: Puxa o cache da RAM instantaneamente (AutoPropagação acontece dentro do DB silenciosamente)
     d = LocalState.get(month)
 
-    inc  = d["income"]; fix=d["fixed"]; ext=d["extras"]; subs=d["subs"]
-    cc   = db.cc_total_from_data(d["cc_all"], month)
-    t_inc= sum(r["amount"] for r in inc)
-    t_gas= sum(r["amount"] for r in fix)+cc+sum(r["amount"] for r in ext)+sum(r["amount"] for r in subs if r["active"])
-    sobra= t_inc-t_gas
-    cor  = "#16a34a" if sobra>=0 else "#ef4444"
-    ef   = d["ef"]
-    t_inv= db.investment_last_total(d["investments"])
-
-    st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0 14px;border-bottom:1px solid #e5e7eb;margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:32px;height:32px;border-radius:50%;border:2px solid #00c896;display:flex;align-items:center;justify-content:center;font-size:14px">💚</div>
-        <div><div style="font-size:14px;font-weight:700;color:#1a2332">minhas<span style="color:#00c896">Finanças</span></div><div style="font-size:10px;color:#6b7280">{ML(month)}</div></div>
-      </div>
-      <div style="display:flex;gap:18px">
-        <div style="text-align:center"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280">Entradas</div><div style="font-size:14px;font-weight:700;color:#16a34a;font-family:DM Mono,monospace">{R(t_inc)}</div></div>
-        <div style="width:1px;background:#e5e7eb"></div>
-        <div style="text-align:center"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280">Gastos</div><div style="font-size:14px;font-weight:700;color:#ef4444;font-family:DM Mono,monospace">{R(t_gas)}</div></div>
-        <div style="width:1px;background:#e5e7eb"></div>
-        <div style="text-align:center"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280">Saldo</div><div style="font-size:14px;font-weight:700;color:{cor};font-family:DM Mono,monospace">{R(sobra)}</div></div>
-        <div style="width:1px;background:#e5e7eb"></div>
-        <div style="text-align:center"><div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#6b7280">Guardado</div><div style="font-size:14px;font-weight:700;color:#3b82f6;font-family:DM Mono,monospace">{R(t_inv+ef)}</div></div>
-      </div></div>""", unsafe_allow_html=True)
-
-    t1,t2,t3,t4,t5,t6,t7,t8,t9=st.tabs(["📊 Painel","🏠 Contas Fixas","📋 Planilha","💳 Variável","📈 Investimentos","⚠️ Dívidas","🎯 Metas","🤖 Consultor IA","⚙️ Config"])
+    t1,t2,t3,t4,t5,t6,t7,t8,t9,t10=st.tabs(["📊 Painel", "💰 Renda", "🏠 Contas Fixas", "📋 Planilha", "💳 Variável", "🐷 Guardado", "⚠️ Dívidas", "🎯 Metas", "🤖 IA", "⚙️ Config"])
     with t1: tab_painel(month, d)
-    with t2: tab_contas(month, d)
-    with t3: tab_planilha(month, d)
-    with t4: tab_variavel(month, d)
-    with t5: tab_investimentos(month, d)
-    with t6: tab_dividas(d)
-    with t7: tab_metas(d)
-    with t8: tab_assistente(month, d)
-    with t9: tab_config(d)
+    with t2: tab_renda(month, d)
+    with t3: tab_contas(month, d)
+    with t4: tab_planilha(month, d)
+    with t5: tab_variavel(month, d)
+    with t6: tab_guardado(month, d)
+    with t7: tab_dividas(d)
+    with t8: tab_metas(d)
+    with t9: tab_assistente(month, d)
+    with t10: tab_config(d)
 
 if __name__ == "__main__":
     main()
