@@ -1,39 +1,29 @@
-"""
-db.py  — versão ultrarrápida
-· psycopg2.pool.ThreadedConnectionPool cacheado via @st.cache_resource
-· Conexão reutilizada (sem TCP handshake a cada query)
-· Funções batch por página: todas as queries em UMA conexão emprestada
-"""
-
 import os, json, hashlib, math
 from datetime import datetime
 from contextlib import contextmanager
 
-import psycopg2, psycopg2.pool
+import psycopg2
+from psycopg2 import pool
 import psycopg2.extras
 
-# ── Credenciais diretas (sem parsing de URL) ──────────────────────────────────
-_DB_HOST = "aws-0-sa-east-1.pooler.supabase.com"
-_DB_PORT = 6543
-_DB_USER = "postgres.mmdhywifopqkblvmuwlq"
-_DB_NAME = "postgres"
-
-def _pw() -> str:
-    try:
-        import streamlit as st
-        return st.secrets.get("DB_PASSWORD", os.environ.get("DB_PASSWORD", ""))
-    except Exception:
-        return os.environ.get("DB_PASSWORD", "")
+# Evita crash de versões em cache do app.py que ainda procuram essa variável
+USE_PG = True 
 
 # ── Pool cacheado pelo Streamlit (vive durante toda a sessão do servidor) ─────
 def get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     """Importado e cacheado em app.py com @st.cache_resource."""
+    import streamlit as st
+    
+    # Busca a URL completa do banco nos secrets
+    db_url = st.secrets.get("DATABASE_URL", os.environ.get("DATABASE_URL", ""))
+    
+    if not db_url:
+        raise ValueError("DATABASE_URL não configurada nos Secrets do Streamlit.")
+
     return psycopg2.pool.ThreadedConnectionPool(
         minconn=2, maxconn=10,
-        host=_DB_HOST, port=_DB_PORT,
-        user=_DB_USER, password=_pw(),
-        dbname=_DB_NAME, sslmode="require",
-        connect_timeout=15,
+        dsn=db_url,
+        sslmode="require",
         options="-c statement_timeout=15000 -c idle_in_transaction_session_timeout=30000",
     )
 
@@ -259,7 +249,7 @@ def investment_projection(cur: float, mp: float, apr: float, yrs: int) -> float:
     return cur * (1 + r) ** n + mp * ((1 + r) ** n - 1) / r
 
 # ════════════════════════════════════════════════════════════════════════════════
-# CRUD — Income
+# CRUD
 # ════════════════════════════════════════════════════════════════════════════════
 def add_income(m, l, a, d=30):
     rid = _exec("INSERT INTO income(month,label,amount,due_day) VALUES(%s,%s,%s,%s) RETURNING id", (m, l, a, d))
@@ -275,7 +265,6 @@ def del_income(rid):
     _hist("DELETE", "income", rid, before)
     _exec("DELETE FROM income WHERE id=%s", (rid,))
 
-# ── Fixed Expenses ────────────────────────────────────────────────────────────
 def add_fixed(m, l, a, d, cat):
     rid = _exec("INSERT INTO fixed_expenses(month,label,amount,due_day,category) VALUES(%s,%s,%s,%s,%s) RETURNING id",
                 (m, l, a, d, cat))
@@ -304,7 +293,6 @@ def copy_fixed_prev(month: str) -> int:
               (month, r["label"], r["amount"], r["due_day"], r["category"]))
     return len(rows)
 
-# ── Credit Card ───────────────────────────────────────────────────────────────
 def add_cc(l, tot, inst, sm, cn="Cartão Principal"):
     _exec("INSERT INTO credit_card_items(label,total_amount,installments,start_month,card_name) VALUES(%s,%s,%s,%s,%s) RETURNING id",
           (l, tot, inst, sm, cn))
@@ -312,7 +300,6 @@ def add_cc(l, tot, inst, sm, cn="Cartão Principal"):
 def del_cc(rid):
     _exec("DELETE FROM credit_card_items WHERE id=%s", (rid,))
 
-# ── Extra Expenses ────────────────────────────────────────────────────────────
 def add_extra(m, l, a, cat, method, expense_type="extra"):
     _exec("INSERT INTO extra_expenses(month,label,amount,category,payment_method,expense_type) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",
           (m, l, a, cat, method, expense_type))
@@ -320,7 +307,6 @@ def add_extra(m, l, a, cat, method, expense_type="extra"):
 def del_extra(rid):
     _exec("DELETE FROM extra_expenses WHERE id=%s", (rid,))
 
-# ── Subscriptions ─────────────────────────────────────────────────────────────
 def add_sub(l, a, cat, bd, notes=""):
     _exec("INSERT INTO subscriptions(label,amount,category,billing_day,notes) VALUES(%s,%s,%s,%s,%s) RETURNING id",
           (l, a, cat, bd, notes))
@@ -332,7 +318,6 @@ def toggle_sub(rid):
 def del_sub(rid):
     _exec("DELETE FROM subscriptions WHERE id=%s", (rid,))
 
-# ── Debts ─────────────────────────────────────────────────────────────────────
 def add_debt(l, tot, rem, mp, rate, due_day=30, notes=""):
     _exec("INSERT INTO debts(label,total_amount,remaining_amount,monthly_payment,interest_rate,due_day,notes) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING id",
           (l, tot, rem, mp, rate, due_day, notes))
@@ -346,7 +331,6 @@ def update_debt_due_day(rid, d):
 def del_debt(rid):
     _exec("DELETE FROM debts WHERE id=%s", (rid,))
 
-# ── Investments ───────────────────────────────────────────────────────────────
 def upsert_investment(month, aa, ta, tp, source, due_day=30, notes=""):
     _exec(
         "INSERT INTO investments(month,amount_added,total_accumulated,investment_type,investment_source,due_day,notes) "
@@ -360,7 +344,6 @@ def upsert_investment(month, aa, ta, tp, source, due_day=30, notes=""):
 def del_investment(rid):
     _exec("DELETE FROM investments WHERE id=%s", (rid,))
 
-# ── Insurance ─────────────────────────────────────────────────────────────────
 def add_insurance(l, pv, mc, cv, due_day=30, notes=""):
     _exec("INSERT INTO insurance(label,provider,monthly_cost,coverage,due_day,notes) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",
           (l, pv, mc, cv, due_day, notes))
@@ -371,7 +354,6 @@ def update_insurance_due_day(rid, d):
 def del_insurance(rid):
     _exec("DELETE FROM insurance WHERE id=%s", (rid,))
 
-# ── Goals ─────────────────────────────────────────────────────────────────────
 def add_goal(l, tg, cur=0, dl="", notes=""):
     _exec("INSERT INTO goals(label,target_amount,current_amount,deadline,notes) VALUES(%s,%s,%s,%s,%s) RETURNING id",
           (l, tg, cur, dl, notes))
@@ -382,12 +364,10 @@ def update_goal(rid, cur):
 def del_goal(rid):
     _exec("DELETE FROM goals WHERE id=%s", (rid,))
 
-# ── Emergency Fund ────────────────────────────────────────────────────────────
 def set_ef(month, balance):
     _exec("INSERT INTO emergency_fund(month,balance) VALUES(%s,%s) ON CONFLICT(month) DO UPDATE SET balance=EXCLUDED.balance",
           (month, balance))
 
-# ── Bills ─────────────────────────────────────────────────────────────────────
 def add_bill_template(l, est, cat, dd):
     _exec("INSERT INTO bill_templates(label,estimated_amount,category,due_day) VALUES(%s,%s,%s,%s) RETURNING id",
           (l, est, cat, dd))
@@ -396,7 +376,6 @@ def del_bill_template(rid):
     _exec("DELETE FROM bill_templates WHERE id=%s", (rid,))
 
 def generate_bills_from_templates(month: str, bills: list, templates: list) -> int:
-    """Versão que recebe dados já carregados (sem queries extras)."""
     existing_labels = {r["label"] for r in bills}
     added = 0
     for t in templates:
@@ -415,7 +394,6 @@ def upsert_bill(month, label, amount, category, due_day):
         _exec("INSERT INTO bills(month,label,amount,category,due_day) VALUES(%s,%s,%s,%s,%s) RETURNING id",
               (month, label, amount, category, due_day))
 
-# ── Payments ──────────────────────────────────────────────────────────────────
 def set_payment(month, itype, iid, ilabel, amount, paid: bool):
     paid_at = datetime.now().isoformat() if paid else None
     _exec(
@@ -429,7 +407,7 @@ def update_sub_billing_day(rid, day):
     _exec("UPDATE subscriptions SET billing_day=%s WHERE id=%s", (day, rid))
 
 # ════════════════════════════════════════════════════════════════════════════════
-# INIT DB — Cria tabelas se não existirem
+# INIT DB
 # ════════════════════════════════════════════════════════════════════════════════
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY, value TEXT);
@@ -451,13 +429,9 @@ INSERT INTO config(key,value) VALUES('password','03ac674216f3e15c761ee1a5e255f06
 """
 
 def init_db() -> tuple[bool, str]:
-    """
-    Testa a conexão e cria as tabelas.
-    Retorna (True, "") em sucesso ou (False, mensagem_de_erro).
-    """
     try:
-        pool = get_pool()
-        conn = pool.getconn()
+        pool_obj = get_pool()
+        conn = pool_obj.getconn()
         try:
             cur = conn.cursor()
             for stmt in SCHEMA_SQL.strip().split(";"):
@@ -468,11 +442,10 @@ def init_db() -> tuple[bool, str]:
                         conn.commit()
                     except Exception:
                         conn.rollback()
-            # Armazena pool no session_state para ser usado por _conn()
             import streamlit as st
-            st.session_state["_pool"] = pool
+            st.session_state["_pool"] = pool_obj
         finally:
-            pool.putconn(conn)
+            pool_obj.putconn(conn)
         return True, ""
     except Exception as e:
         return False, str(e)
