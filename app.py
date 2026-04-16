@@ -143,9 +143,10 @@ label{color:var(--body)!important;font-size:12px!important;font-weight:500!impor
 .stButton>button:hover{background:var(--green2)!important}
 .stFormSubmitButton>button{background:var(--green)!important;color:white!important;border:none!important;border-radius:8px!important;font-weight:600!important;font-size:13px!important;width:100%}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:3px}
-.diag-ok{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;color:#166534;font-size:13px;margin-bottom:6px}
-.diag-warn{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;color:#92400e;font-size:13px;margin-bottom:6px}
-.diag-crit{background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px 14px;color:#991b1b;font-size:13px;margin-bottom:6px}
+.diag-ok{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 16px;color:#166534;font-size:14px;margin-bottom:16px}
+.diag-warn{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;color:#92400e;font-size:14px;margin-bottom:16px}
+.diag-crit{background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 16px;color:#991b1b;font-size:14px;margin-bottom:16px}
+.diag-info{background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 16px;color:#1e40af;font-size:14px;margin-bottom:16px}
 </style>"""
 
 def login_page():
@@ -254,10 +255,30 @@ def tab_painel(month, d):
     cor15 = "#16a34a" if sobra_15 >= 0 else "#ef4444"
     cor30 = "#16a34a" if sobra_30 >= 0 else "#ef4444"
 
-    st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 14px">
+    st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 10px">
       <div><h1 style="font-size:26px;font-weight:700;color:#1a2332;margin:0">Painel Executivo</h1>
       <p style="color:#6b7280;font-size:13px;margin-top:3px">Resumo de {ML(month)}</p></div>
     </div>""", unsafe_allow_html=True)
+
+    # ── DIAGNÓSTICO RÁPIDO ───────────────────────────────────────────────────
+    diag_msg = ""
+    if t_inc == 0:
+        diag_msg = '<div class="diag-info">ℹ️ <b>Mês Novo:</b> Adicione as Rendas Esperadas para ver o diagnóstico completo da família.</div>'
+    elif sobra < 0:
+        diag_msg = f'<div class="diag-crit">🚨 <b>Atenção Família!</b> Vocês estão {R(abs(sobra))} no vermelho. Deem uma freada urgente, principalmente nos Gastos Extras (já foram {R(t_ext)}). O foco agora é pagar apenas o essencial!</div>'
+    elif sobra > 0:
+        if t_debt > 0:
+            if t_ext > sobra:
+                diag_msg = f'<div class="diag-warn">🟡 <b>Cuidado Priscila e Thiago:</b> Ainda tem {R(sobra)} sobrando, mas os gastos extras ({R(t_ext)}) já estão maiores que a sobra. Segurem a mão para garantir que dê para pagar as dívidas do mês!</div>'
+            else:
+                diag_msg = f'<div class="diag-ok">🟢 <b>Excelente mês!</b> Contas sob controle e ainda sobram {R(sobra)}. Que tal pegar uns R$ 100 para um hambúrguer a dois para celebrar, e usar o resto para adiantar as dívidas? Vocês chegam lá!</div>'
+        else:
+            diag_msg = f'<div class="diag-ok">🌟 <b>Cenário Ideal!</b> Sem dívidas mensais cadastradas e com {R(sobra)} livres. Vocês estão voando. Excelente mês para engordar o Porquinho da Isa ou focar nos objetivos!</div>'
+    else:
+         diag_msg = '<div class="diag-warn">🟡 <b>No Limite!</b> O orçamento deste mês está empatado (zero a zero). Evitem qualquer gasto extra daqui para frente para não entrar no vermelho.</div>'
+    
+    st.markdown(diag_msg, unsafe_allow_html=True)
+    # ─────────────────────────────────────────────────────────────────────────
 
     c1, c2, c3 = st.columns([1,1,1.1], gap="medium")
 
@@ -388,7 +409,7 @@ def tab_contas(month, d):
         if fix:
             for r in sorted(fix, key=lambda x: x["due_day"]):
                 c1,c2,c3,c4=st.columns([3,2,1,1])
-                c1.markdown(f'<div style="font-size:13px;font-weight:500">{r["label"]}</div><span class="badge b-{"15" if r["due_day"]==15 else "30"}" style="font-size:9px">{r["category"]} · Dia {r["due_day"]}</span>', unsafe_allow_html=True)
+                c1.markdown(f'<div style="font-size:13px;font-weight:500">{r["label"]}</div><span class="badge b-{"15" if r["due_day"]<=15 else "30"}" style="font-size:9px">{r["category"]} · Dia {r["due_day"]}</span>', unsafe_allow_html=True)
                 c2.markdown(f'<span style="font-family:DM Mono,monospace;color:#ef4444;font-size:13px;padding-top:4px;display:block">{R(r["amount"])}</span>', unsafe_allow_html=True)
                 if c3.button("✎",key=f"ef_{r['id']}"): st.session_state[f"ef_{r['id']}"]=True
                 if c4.button("✕",key=f"df_{r['id']}"): 
@@ -396,7 +417,7 @@ def tab_contas(month, d):
                 if st.session_state.get(f"ef_{r['id']}"):
                     with st.form(f"eff_{r['id']}"):
                         nl=st.text_input("Descrição",r["label"]); na=st.number_input("Valor",value=float(r["amount"]),step=5.)
-                        nd=st.selectbox("Dia",[15,30],index=0 if r["due_day"]==15 else 1)
+                        nd=st.number_input("Dia",min_value=1,max_value=31,value=r["due_day"])
                         nc=st.selectbox("Categoria",CATS,index=CATS.index(r["category"]) if r["category"] in CATS else 0)
                         if st.form_submit_button("Salvar", width="stretch"):
                             db.update_fixed(r["id"],nl,na,nd,nc)
@@ -777,7 +798,7 @@ def tab_dividas(d):
                 elif mz<=24: alert=f'<span class="badge b-amber">Zera em {mz} meses</span>'
                 else:        alert=f'<span class="badge b-red">⚠️ {mz} meses</span>'
                 pct=max(0,min(100,(1-r["remaining_amount"]/r["total_amount"])*100)) if r["total_amount"]>0 else 0
-                ciclo_badge=f'<span class="badge b-{"15" if r.get("due_day",30)==15 else "30"}" style="font-size:9px">Dia {r.get("due_day",30)}</span>'
+                ciclo_badge=f'<span class="badge b-{"15" if r.get("due_day",30)<=15 else "30"}" style="font-size:9px">Dia {r.get("due_day",30)}</span>'
                 st.markdown(f'<div style="padding:10px 0;border-bottom:1px solid var(--border)"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-weight:600;font-size:13px">{r["label"]} {ciclo_badge}</div><div style="font-size:11px;color:#6b7280">Restante: <b style="color:#ef4444">{R(r["remaining_amount"])}</b> · Parcela: {R(r["monthly_payment"])} · Juros: {r["interest_rate"]:.1f}%a.m.</div></div>{alert}</div>{prog_bar(pct)}</div>', unsafe_allow_html=True)
                 ca,cb,cc_col=st.columns([1.5,0.7,0.7])
                 nv=ca.number_input("Saldo",value=float(r["remaining_amount"]),step=100.,key=f"dr{r['id']}")
@@ -842,7 +863,7 @@ def tab_metas(d):
         st.markdown('</div>', unsafe_allow_html=True)
 
 def tab_assistente(month, d):
-    st.markdown('<div style="text-align:center;padding:10px 0 20px"><h2 style="font-size:22px;font-weight:700;color:#1a2332;margin:0">Gestor Financeiro IA</h2><p style="color:#6b7280;font-size:13px;margin-top:5px">Plano de choque para matar dívidas — estilo <b>Bruno Perini</b></p></div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;padding:10px 0 20px"><h2 style="font-size:22px;font-weight:700;color:#1a2332;margin:0">Gestor Financeiro IA</h2><p style="color:#6b7280;font-size:13px;margin-top:5px">Conselheiro e organizador prático da família</p></div>', unsafe_allow_html=True)
     cfg=d["config"]; inc=d["income"]; fix=d["fixed"]; ext=d["extras"]; subs=d["subs"]
     debts=d["debts"]; invs=d["investments"]; goals=d["goals"]
     
@@ -856,17 +877,17 @@ def tab_assistente(month, d):
     t_inc=sum(r["amount"] for r in inc); t_fix=sum(r["amount"] for r in fix)
     t_ext=sum(r["amount"] for r in ext); t_subs=sum(r["amount"] for r in subs if r["active"])
     t_debt_m=sum(r["monthly_payment"] for r in debts); t_debt_t=sum(r["remaining_amount"] for r in debts)
-    t_inv=sum(float(r["amount_added"]) for r in invs if r["month"]==month) # Apenas Guardado do mês
+    t_inv=sum(float(r["amount_added"]) for r in invs if r["month"]==month)
     
     _,c,_=st.columns([1,2,1])
     with c:
-        if st.button("🚨 Gerar Plano de Guerra contra as Dívidas", width="stretch"):
+        if st.button("🤝 Pedir Conselho sobre este mês", width="stretch"):
             _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_inv,0,goals,debts,subs,fix,inc)
     
     key=f"ai_{month}"
     if key in st.session_state:
         st.markdown(f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #00c896;border-radius:12px;padding:22px 26px;margin-top:18px;font-size:14px;line-height:1.8;color:#374151;max-width:780px;margin-inline:auto">{st.session_state[key].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
-        qs=["Como acelerar o pagamento das dívidas este mês?","Onde eu e Thiago estamos perdendo dinheiro?","Qual deve ser nossa prioridade número um hoje?"]
+        qs=["Como acelerar o pagamento das dívidas este mês?","Qual é o nosso principal ralo de dinheiro?","Dê uma dica para a gente economizar sem perder a qualidade de vida."]
         qc=st.columns(3)
         for i,q in enumerate(qs):
             if qc[i%3].button(q,key=f"q{i}"):
@@ -887,7 +908,7 @@ def _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_i
 Dívidas/mês: R${t_debt_m:.0f} | Total dívidas: R${t_debt_t:.0f} | Porquinho: R${t_inv:.0f}
 Assinaturas: {s_txt} | Dívidas: {d_txt} | Metas: {g_txt}"""
 
-    system="Você é o consultor financeiro implacável de Priscila e Thiago, estilo Bruno Perini. O casal está sufocado por dívidas e precisa de um choque de realidade e um plano de guerra para sair do buraco financeiro. Seja direto, rigoroso e pragmático. Nada de falas genéricas ou fofas.\nESTRUTURA: 1.📊 Diagnóstico Nu e Cru (como a matemática não perdoa) 2.🚨 Sangramento (Onde eles estão errando feio) 3.🔪 Cortes Imediatos 4.🎯 Estratégia de Guerra contra as Dívidas 5.💡 Regra de Ouro para o Casal. \nMax 500 palavras. Português informal, chamando-os pelos nomes."
+    system="Você é o consultor financeiro pessoal, cordial e acolhedor da família (Priscila, Thiago e a pequena Isa). Sem palavrões, sempre respeitoso e prático. Dê conselhos como um amigo especialista. Se gastaram muito (ex: mercado, extras), puxe a orelha com carinho. Se sobrou, elogie, sugira pegar uns 100 reais para um hambúrguer pro casal e destinar o resto pras dívidas ou pro Porquinho. Seu objetivo é encorajá-los de que, com disciplina, as dívidas vão sumir. Estrutura: 1. Diagnóstico do Mês 2. Ponto de Atenção 3. Conselho Prático. Máx 300 palavras."
     
     with st.spinner("Analisando a situação de vocês..."):
         try:
@@ -906,7 +927,7 @@ def _run_ai_q(api_key,question,month,t_inc,t_gasto,t_debt,t_inv,ef):
         try:
             model = genai.GenerativeModel(
                 'gemini-2.5-flash', 
-                system_instruction="Consultor financeiro implacável, estilo Bruno Perini, ajudando Priscila e Thiago a saírem das dívidas. Max 200 palavras, respostas duras, focadas na matemática e no corte de despesas. Português informal."
+                system_instruction="Você é o consultor financeiro amigo e empático de Priscila e Thiago (que têm uma filha de 6 anos, Isa). Dê respostas curtas, práticas, sem palavrões e sempre encorajadoras. Max 200 palavras."
             )
             r = model.generate_content(f"Contexto financeiro: {ctx}\n\nPergunta da Priscila: {question}")
             st.session_state[f"ai_q_{month}"]=r.text; st.rerun()
@@ -946,7 +967,7 @@ def tab_config(d):
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Banco de dados</div>', unsafe_allow_html=True)
         st.markdown('<div class="diag-ok">🟢 Supabase + Optimistic UI + Gemini AI</div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">12.0 — Debt Killer Edition</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">12.1 — Family Edition</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         if st.button("🔄 Forçar recarga do banco", width="stretch"):
             LocalState.reload()
