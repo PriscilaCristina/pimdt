@@ -58,7 +58,6 @@ class LocalState:
 
     @staticmethod
     def get_leftover(month):
-        """Calcula a sobra do mês dinamicamente sem usar cache."""
         d = db.get_month_data(month)
         t_inc = sum(r["amount"] for r in d["income"])
         cc = db.cc_total_from_data(d["cc_all"], month)
@@ -429,11 +428,11 @@ def tab_contas(month, d):
         st.markdown('<div class="sec">+ Adicionar Conta Fixa</div>', unsafe_allow_html=True)
         with st.form("add_fix"):
             l=st.text_input("Descrição","",placeholder="Ex: Aluguel…"); a=st.number_input("Valor",min_value=0.,step=10.)
-            d_=st.selectbox("Venc. (Ciclo)",[15,30]); ca=st.selectbox("Categoria",CATS)
+            d_=st.number_input("Dia de Venc.", min_value=1, max_value=31, value=15); ca=st.selectbox("Categoria",CATS)
             if st.form_submit_button("Adicionar", width="stretch"):
                 if l and a>0: 
-                    rid = db.add_fixed(month,l,a,d_,ca)
-                    LocalState.add("fixed", {"id":rid, "month":month, "label":l, "amount":a, "due_day":d_, "category":ca})
+                    rid = db.add_fixed(month,l,a,int(d_),ca)
+                    LocalState.add("fixed", {"id":rid, "month":month, "label":l, "amount":a, "due_day":int(d_), "category":ca})
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -441,7 +440,7 @@ def tab_contas(month, d):
         with st.form("add_tpl"):
             l=st.text_input("Nome","",placeholder="Ex: Conta de Luz"); a=st.number_input("Estimativa (R$)",min_value=0.,step=5.)
             ca=st.selectbox("Categoria",CATS)
-            dd=st.number_input("Dia",min_value=1,max_value=31,value=10)
+            dd=st.number_input("Dia de Venc.",min_value=1,max_value=31,value=10)
             if st.form_submit_button("Criar", width="stretch"):
                 if l: 
                     rid = db.add_bill_template(l,a,ca,int(dd))
@@ -527,8 +526,8 @@ def tab_variavel(month, d):
     items_m=db.cc_items_from_data(cc_all,month)
     total_m=db.cc_total_from_data(cc_all,month)
     extras=d["extras"]
-    api_key=os.environ.get("ANTHROPIC_API_KEY","") or cfg.get("api_key","")
-    try: api_key=api_key or st.secrets.get("ANTHROPIC_API_KEY","")
+    api_key=os.environ.get("GEMINI_API_KEY","") or cfg.get("api_key","")
+    try: api_key=api_key or st.secrets.get("GEMINI_API_KEY","")
     except Exception: pass
 
     with sub1:
@@ -689,25 +688,26 @@ def tab_variavel(month, d):
             st.markdown('</div>', unsafe_allow_html=True)
 
 def _parse_fatura(api_key, text, month, card_name):
-    import anthropic as _ant
-    system='Analise a fatura e retorne APENAS JSON array: [{"label":"item","total_amount":valor,"installments":1,"start_month":"AAAA-MM"}]. Para parceladas total_amount é o total. Sem explicações.'
+    import google.generativeai as genai
+    genai.configure(api_key=api_key)
+    system='Analise a fatura e retorne APENAS um JSON array válido neste formato exato: [{"label":"NOME","total_amount":VALOR,"installments":1,"start_month":"AAAA-MM"}]. Para compras parceladas, total_amount é o valor total da compra. Sem explicações ou markdown em volta.'
+    
     try:
-        client=_ant.Anthropic(api_key=api_key)
-        r=client.messages.create(model="claude-haiku-4-5-20251001",max_tokens=1000,system=system,messages=[{"role":"user","content":f"Fatura {month}:\n{text}"}])
-        raw=r.content[0].text.strip().replace("```json","").replace("```","").strip()
-        items=json.loads(raw); count=0
+        model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system)
+        r = model.generate_content(f"Fatura {month}:\n{text}")
+        raw = r.text.strip().replace("```json","").replace("```","").strip()
+        items = json.loads(raw)
+        count = 0
         for it in items:
             if "label" in it and "total_amount" in it:
                 db.add_cc(it["label"],float(it["total_amount"]),int(it.get("installments",1)),it.get("start_month",month),card_name); count+=1
         st.success(f"✅ {count} item(s) importado(s)!"); LocalState.reload()
-    except Exception as e: st.error(f"Erro: {e}")
+    except Exception as e: st.error(f"Erro ao processar fatura: {e}")
 
 def tab_guardado(month, d):
-    # Calcula a sobra do mês passado dinamicamente
     prev_month = prev_m(month)
     prev_leftover = LocalState.get_leftover(prev_month)
     
-    # Pega os guardados manuais deste mês
     invs = [r for r in d["investments"] if r["month"] == month]
     man_saved = sum(float(r["amount_added"]) for r in invs)
     
@@ -842,58 +842,75 @@ def tab_metas(d):
         st.markdown('</div>', unsafe_allow_html=True)
 
 def tab_assistente(month, d):
-    st.markdown('<div style="text-align:center;padding:10px 0 20px"><h2 style="font-size:22px;font-weight:700;color:#1a2332;margin:0">Consultor Financeiro IA</h2><p style="color:#6b7280;font-size:13px;margin-top:5px">Análise direta — estilo <b>Bruno Perini</b> e <b>Thiago Nigro</b></p></div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;padding:10px 0 20px"><h2 style="font-size:22px;font-weight:700;color:#1a2332;margin:0">Gestor Financeiro IA</h2><p style="color:#6b7280;font-size:13px;margin-top:5px">Plano de choque para matar dívidas — estilo <b>Bruno Perini</b></p></div>', unsafe_allow_html=True)
     cfg=d["config"]; inc=d["income"]; fix=d["fixed"]; ext=d["extras"]; subs=d["subs"]
     debts=d["debts"]; invs=d["investments"]; goals=d["goals"]
-    api_key=os.environ.get("ANTHROPIC_API_KEY","") or cfg.get("api_key","")
-    try: api_key=api_key or st.secrets.get("ANTHROPIC_API_KEY","")
+    
+    api_key=os.environ.get("GEMINI_API_KEY","") or cfg.get("api_key","")
+    try: api_key=api_key or st.secrets.get("GEMINI_API_KEY","")
     except Exception: pass
-    if not api_key: st.warning("Configure a chave API em ⚙️ Configurações."); return
+    
+    if not api_key: st.warning("Configure a chave API do Google Gemini em ⚙️ Configurações."); return
+    
     cc=db.cc_total_from_data(d["cc_all"],month)
     t_inc=sum(r["amount"] for r in inc); t_fix=sum(r["amount"] for r in fix)
     t_ext=sum(r["amount"] for r in ext); t_subs=sum(r["amount"] for r in subs if r["active"])
     t_debt_m=sum(r["monthly_payment"] for r in debts); t_debt_t=sum(r["remaining_amount"] for r in debts)
     t_inv=sum(float(r["amount_added"]) for r in invs if r["month"]==month) # Apenas Guardado do mês
+    
     _,c,_=st.columns([1,2,1])
     with c:
-        if st.button("🔍 Analisar minha situação financeira", width="stretch"):
+        if st.button("🚨 Gerar Plano de Guerra contra as Dívidas", width="stretch"):
             _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_inv,0,goals,debts,subs,fix,inc)
+    
     key=f"ai_{month}"
     if key in st.session_state:
         st.markdown(f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #00c896;border-radius:12px;padding:22px 26px;margin-top:18px;font-size:14px;line-height:1.8;color:#374151;max-width:780px;margin-inline:auto">{st.session_state[key].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
-        qs=["Como pagar minhas dívidas mais rápido?","Onde estou desperdiçando dinheiro?","Dicas de planejamento para a família"]
+        qs=["Como acelerar o pagamento das dívidas este mês?","Onde eu e Thiago estamos perdendo dinheiro?","Qual deve ser nossa prioridade número um hoje?"]
         qc=st.columns(3)
         for i,q in enumerate(qs):
             if qc[i%3].button(q,key=f"q{i}"):
                 _run_ai_q(api_key,q,month,t_inc,t_fix+cc+t_subs+t_ext,t_debt_t,t_inv,0)
+    
     if f"ai_q_{month}" in st.session_state:
         st.markdown(f'<div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;margin-top:10px;font-size:13px;line-height:1.7;max-width:780px;margin-inline:auto">{st.session_state[f"ai_q_{month}"].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
 
 def _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_inv,ef,goals,debts,subs,fix,inc):
-    import anthropic as _ant
+    import google.generativeai as genai
+    genai.configure(api_key=api_key)
+    
     g_txt="\n".join([f"  · {g['label']}: {R(g['current_amount'])}/{R(g['target_amount'])} ({g['deadline']})" for g in goals]) or "  Nenhuma"
     d_txt="\n".join([f"  · {d['label']}: R${d['remaining_amount']:.0f} rest, {R(d['monthly_payment'])}/mês, {d['interest_rate']:.1f}%a.m." for d in debts]) or "  Nenhuma"
     s_txt="\n".join([f"  · {s['label']}: {R(s['amount'])}/mês" for s in subs if s["active"]]) or "  Nenhuma"
+    
     prompt=f"""DADOS — {ML(month)}: Renda: R${t_inc:.0f} | Gastos: R${t_fix+cc+t_subs+t_ext:.0f} ({((t_fix+cc+t_subs+t_ext)/t_inc*100 if t_inc>0 else 0):.0f}%) | Sobra: R${t_inc-t_fix-cc-t_subs-t_ext-t_debt_m:.0f}
 Dívidas/mês: R${t_debt_m:.0f} | Total dívidas: R${t_debt_t:.0f} | Porquinho: R${t_inv:.0f}
 Assinaturas: {s_txt} | Dívidas: {d_txt} | Metas: {g_txt}"""
-    system="Consultor financeiro da família Peixoto, estilo Bruno Perini/Primo Rico. Direto, focado em resultado.\nESTRUTURA: 1.📊 Diagnóstico (3 linhas) 2.🚨 Problemas (max 3, valores reais) 3.💡 Plano (5 ações priorizadas) 4.🎯 Meta do mês (1 ação AGORA) 5.📈 Em 12 meses\nMax 500 palavras. Português informal."
-    client=_ant.Anthropic(api_key=api_key)
-    with st.spinner("Analisando..."):
+
+    system="Você é o consultor financeiro implacável de Priscila e Thiago, estilo Bruno Perini. O casal está sufocado por dívidas e precisa de um choque de realidade e um plano de guerra para sair do buraco financeiro. Seja direto, rigoroso e pragmático. Nada de falas genéricas ou fofas.\nESTRUTURA: 1.📊 Diagnóstico Nu e Cru (como a matemática não perdoa) 2.🚨 Sangramento (Onde eles estão errando feio) 3.🔪 Cortes Imediatos 4.🎯 Estratégia de Guerra contra as Dívidas 5.💡 Regra de Ouro para o Casal. \nMax 500 palavras. Português informal, chamando-os pelos nomes."
+    
+    with st.spinner("Analisando a situação de vocês..."):
         try:
-            r=client.messages.create(model="claude-opus-4-6",max_tokens=700,system=system,messages=[{"role":"user","content":prompt}])
-            st.session_state[f"ai_{month}"]=r.content[0].text; st.rerun()
-        except Exception as e: st.error(f"Erro: {e}")
+            model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system)
+            r = model.generate_content(prompt)
+            st.session_state[f"ai_{month}"]=r.text; st.rerun()
+        except Exception as e: st.error(f"Erro ao consultar Gemini: {e}")
 
 def _run_ai_q(api_key,question,month,t_inc,t_gasto,t_debt,t_inv,ef):
-    import anthropic as _ant
-    ctx=f"Renda: R${t_inc:.0f} · Gastos: R${t_gasto:.0f} · Dívidas: R${t_debt:.0f} · Porquinho: R${t_inv:.0f}"
-    client=_ant.Anthropic(api_key=api_key)
+    import google.generativeai as genai
+    genai.configure(api_key=api_key)
+    
+    ctx=f"Renda do casal Priscila e Thiago: R${t_inc:.0f} · Gastos: R${t_gasto:.0f} · Dívidas: R${t_debt:.0f} · Porquinho: R${t_inv:.0f}"
+    
     with st.spinner("..."):
         try:
-            r=client.messages.create(model="claude-haiku-4-5-20251001",max_tokens=400,system="Consultor financeiro direto, estilo Bruno Perini. Max 200 palavras, prático. Português informal.",messages=[{"role":"user","content":f"Contexto: {ctx}\nPergunta: {question}"}])
-            st.session_state[f"ai_q_{month}"]=r.content[0].text; st.rerun()
-        except Exception as e: st.error(f"Erro: {e}")
+            model = genai.GenerativeModel(
+                'gemini-2.5-flash', 
+                system_instruction="Consultor financeiro implacável, estilo Bruno Perini, ajudando Priscila e Thiago a saírem das dívidas. Max 200 palavras, respostas duras, focadas na matemática e no corte de despesas. Português informal."
+            )
+            r = model.generate_content(f"Contexto financeiro: {ctx}\n\nPergunta da Priscila: {question}")
+            st.session_state[f"ai_q_{month}"]=r.text; st.rerun()
+        except Exception as e: st.error(f"Erro ao consultar Gemini: {e}")
 
 def tab_config(d):
     cfg=d["config"]
@@ -917,19 +934,19 @@ def tab_config(d):
         st.markdown('</div>', unsafe_allow_html=True)
     with c2:
         st.markdown('<div class="card card-green">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Chave API Anthropic</div>', unsafe_allow_html=True)
-        cur_k=cfg.get("api_key",""); masked=f"sk-…{cur_k[-6:]}" if cur_k else "não configurada"
+        st.markdown('<div class="sec">Chave API Gemini (Google)</div>', unsafe_allow_html=True)
+        cur_k=cfg.get("api_key",""); masked=f"AIzaSy…{cur_k[-6:]}" if cur_k else "não configurada"
         st.markdown(f'<p style="font-size:12px;color:#6b7280;margin-bottom:8px">Atual: <code>{masked}</code></p>', unsafe_allow_html=True)
         with st.form("api"):
-            k=st.text_input("Nova chave","",placeholder="sk-ant-…")
+            k=st.text_input("Nova chave","",placeholder="AIzaSy...")
             if st.form_submit_button("Salvar", width="stretch"):
-                if k.startswith("sk-"): db.set_api_key(k); st.success("✅ Salva."); LocalState.reload()
-                else: st.warning("Deve começar com 'sk-'")
+                if k.startswith("AIzaSy"): db.set_api_key(k); st.success("✅ Salva."); LocalState.reload()
+                else: st.warning("A chave do Gemini deve começar com 'AIzaSy'")
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Banco de dados</div>', unsafe_allow_html=True)
-        st.markdown('<div class="diag-ok">🟢 Supabase + Optimistic UI + AutoPropagação</div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">11.1 — Family Edition</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="diag-ok">🟢 Supabase + Optimistic UI + Gemini AI</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">12.0 — Debt Killer Edition</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         if st.button("🔄 Forçar recarga do banco", width="stretch"):
             LocalState.reload()
@@ -966,7 +983,7 @@ def main():
 
     d = LocalState.get(month)
 
-    t1,t2,t3,t4,t5,t6,t7,t8,t9,t10=st.tabs(["📊 Painel", "💰 Renda", "🏠 Contas Fixas", "📋 Planilha", "💳 Variável", "🐷 Guardado", "⚠️ Dívidas", "🎯 Metas", "🤖 IA", "⚙️ Config"])
+    t1,t2,t3,t4,t5,t6,t7,t8,t9,t10=st.tabs(["📊 Painel", "💰 Renda", "🏠 Contas Fixas", "📋 Planilha", "💳 Variável", "🐷 Guardado", "⚠️ Dívidas", "🎯 Metas", "🤖 Gestor IA", "⚙️ Config"])
     with t1: tab_painel(month, d)
     with t2: tab_renda(month, d)
     with t3: tab_contas(month, d)
