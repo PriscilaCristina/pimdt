@@ -225,26 +225,77 @@ def tab_painel(month, d):
     t_subs = sum(r["amount"] for r in subs if r["active"])
     t_bills= sum(r["amount"] for r in bills)
     t_debt = sum(r["monthly_payment"] for r in debts)
+    
     t_gasto= t_fix + cc + t_ext + t_subs + t_bills
     sobra  = t_inc - t_gasto - t_debt
 
-    cor = "#16a34a" if sobra >= 0 else "#ef4444"
-    st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 14px">
-      <div><h1 style="font-size:26px;font-weight:700;color:#1a2332;margin:0">Painel Geral</h1>
-      <p style="color:#6b7280;font-size:13px;margin-top:3px">Visão executiva de {ML(month)}</p></div>
-    </div>""", unsafe_allow_html=True)
+    # ── Cálculos: Ciclo 15 (Vencimentos de 11 a 29)
+    inc_15 = sum(r["amount"] for r in inc if 11 <= r["due_day"] <= 29)
+    gas_15 = sum(r["amount"] for r in fix if 11 <= r["due_day"] <= 29) + \
+             sum(r["amount"] for r in bills if 11 <= r["due_day"] <= 29) + \
+             sum(r["amount"] for r in subs if r["active"] and 11 <= r["billing_day"] <= 29) + \
+             sum(r["monthly_payment"] for r in debts if 11 <= r.get("due_day", 30) <= 29)
+    sobra_15 = inc_15 - gas_15
 
-    cols = st.columns(4, gap="small")
-    with cols[0]: st.markdown(f'<div class="mc" style="border-top:3px solid #16a34a"><div class="mc-val" style="color:#16a34a">{R(t_inc)}</div><div class="mc-label">Renda Esperada</div></div>', unsafe_allow_html=True)
-    with cols[1]: st.markdown(f'<div class="mc" style="border-top:3px solid #ef4444"><div class="mc-val" style="color:#ef4444">{R(t_gasto+t_debt)}</div><div class="mc-label">Total Saídas</div></div>', unsafe_allow_html=True)
-    
-    # Busca a sobra real do mês anterior para o card "Guardado"
+    # ── Cálculos: Ciclo 30 (Vencimentos de 30 a 10)
+    inc_30 = sum(r["amount"] for r in inc if r["due_day"] >= 30 or r["due_day"] <= 10)
+    gas_30 = sum(r["amount"] for r in fix if r["due_day"] >= 30 or r["due_day"] <= 10) + \
+             sum(r["amount"] for r in bills if r["due_day"] >= 30 or r["due_day"] <= 10) + \
+             sum(r["amount"] for r in subs if r["active"] and (r["billing_day"] >= 30 or r["billing_day"] <= 10)) + \
+             sum(r["monthly_payment"] for r in debts if (r.get("due_day", 30) >= 30 or r.get("due_day", 30) <= 10)) + \
+             cc
+    sobra_30 = inc_30 - gas_30
+
+    # ── Guardado / Porquinho
     prev_leftover = LocalState.get_leftover(prev_m(month))
     man_saved = sum(float(r["amount_added"]) for r in d["investments"] if r["month"]==month)
     total_guardado_mes = man_saved + (prev_leftover if prev_leftover > 0 else 0)
 
-    with cols[2]: st.markdown(f'<div class="mc" style="border-top:3px solid #3b82f6"><div class="mc-val" style="color:#3b82f6">{R(total_guardado_mes)}</div><div class="mc-label">Sobra Acumulada</div></div>', unsafe_allow_html=True)
-    with cols[3]: st.markdown(f'<div class="mc" style="border-top:3px solid {cor}"><div class="mc-val" style="color:{cor}">{R(sobra)}</div><div class="mc-label">Saldo Final (Mês)</div></div>', unsafe_allow_html=True)
+    cor = "#16a34a" if sobra >= 0 else "#ef4444"
+    cor15 = "#16a34a" if sobra_15 >= 0 else "#ef4444"
+    cor30 = "#16a34a" if sobra_30 >= 0 else "#ef4444"
+
+    st.markdown(f"""<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 14px">
+      <div><h1 style="font-size:26px;font-weight:700;color:#1a2332;margin:0">Painel Executivo</h1>
+      <p style="color:#6b7280;font-size:13px;margin-top:3px">Resumo de {ML(month)}</p></div>
+    </div>""", unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns([1,1,1.1], gap="medium")
+
+    with c1:
+        st.markdown(f'''
+        <div class="card" style="border-top: 3px solid #3b82f6; padding: 20px;">
+            <div class="sec" style="font-size:13px; margin-bottom: 6px;">Ciclo Dia 15</div>
+            <div style="font-size:11px; color:#6b7280; margin-bottom:14px">Paga contas vencendo dia 11 a 29</div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:14px"><span>Renda</span><span style="color:#16a34a; font-family:DM Mono,monospace">{R(inc_15)}</span></div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px"><span>Saídas</span><span style="color:#ef4444; font-family:DM Mono,monospace">{R(gas_15)}</span></div>
+            <div style="border-top: 1px dashed var(--border); padding-top:12px; display:flex; justify-content:space-between; font-weight:700; font-size:15px"><span>Saldo do Ciclo</span><span style="color:{cor15}; font-family:DM Mono,monospace">{R(sobra_15)}</span></div>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+    with c2:
+        st.markdown(f'''
+        <div class="card" style="border-top: 3px solid #8b5cf6; padding: 20px;">
+            <div class="sec" style="font-size:13px; margin-bottom: 6px;">Ciclo Dia 30</div>
+            <div style="font-size:11px; color:#6b7280; margin-bottom:14px">Paga contas vencendo dia 30 a 10</div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:14px"><span>Renda</span><span style="color:#16a34a; font-family:DM Mono,monospace">{R(inc_30)}</span></div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px"><span>Saídas</span><span style="color:#ef4444; font-family:DM Mono,monospace">{R(gas_30)}</span></div>
+            <div style="border-top: 1px dashed var(--border); padding-top:12px; display:flex; justify-content:space-between; font-weight:700; font-size:15px"><span>Saldo do Ciclo</span><span style="color:{cor30}; font-family:DM Mono,monospace">{R(sobra_30)}</span></div>
+        </div>
+        ''', unsafe_allow_html=True)
+
+    with c3:
+        st.markdown(f'''
+        <div class="card" style="border-top: 3px solid #16a34a; background: #f8fafc; padding: 20px;">
+            <div class="sec" style="font-size:13px; margin-bottom: 6px;">Total do Mês</div>
+            <div style="font-size:11px; color:#6b7280; margin-bottom:14px">Geral + Guardado + Extras</div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:14px"><span>Renda Esperada</span><span style="color:#16a34a; font-weight:600; font-family:DM Mono,monospace">{R(t_inc)}</span></div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:14px"><span>Total Saídas</span><span style="color:#ef4444; font-weight:600; font-family:DM Mono,monospace">{R(t_gasto + t_debt)}</span></div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px"><span>Sobra Acumulada</span><span style="color:#3b82f6; font-weight:600; font-family:DM Mono,monospace">{R(total_guardado_mes)}</span></div>
+            <div style="border-top: 1px solid #cbd5e1; padding-top:12px; display:flex; justify-content:space-between; font-weight:800; font-size:16px"><span>Saldo Final (Mês)</span><span style="color:{cor}; font-family:DM Mono,monospace">{R(sobra)}</span></div>
+        </div>
+        ''', unsafe_allow_html=True)
+
     st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
 
     from collections import defaultdict
@@ -269,10 +320,10 @@ def tab_painel(month, d):
             st.markdown('</div>', unsafe_allow_html=True)
     with right:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown('<div class="sec">Resumo do Mês</div>', unsafe_allow_html=True)
-        for label,value,color in [("📈 Renda do Mês",t_inc,"#16a34a"),("🏠 Fixos e Contas",t_fix+t_bills,"#ef4444"),("💳 Cartão",cc,"#f59e0b"),("📤 Variáveis",t_ext,"#6b7280"),("📱 Assinaturas",t_subs,"#8b5cf6"),("⚠️ Dívidas",t_debt,"#dc2626")]:
+        st.markdown('<div class="sec">Resumo de Saídas do Mês</div>', unsafe_allow_html=True)
+        for label,value,color in [("🏠 Fixos e Contas",t_fix+t_bills,"#ef4444"),("💳 Cartão",cc,"#f59e0b"),("📤 Extras (Variáveis)",t_ext,"#6b7280"),("📱 Assinaturas",t_subs,"#8b5cf6"),("⚠️ Dívidas",t_debt,"#dc2626")]:
             if value>0:
-                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;border-bottom:1px dashed var(--border)"><span>{label}</span><span style="font-family:DM Mono,monospace;color:{color};font-weight:600">{R(value)}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="display:flex;justify-content:space-between;padding:12px 0;font-size:14px;border-bottom:1px dashed var(--border)"><span>{label}</span><span style="font-family:DM Mono,monospace;color:{color};font-weight:600">{R(value)}</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
 def tab_renda(month, d):
@@ -798,15 +849,15 @@ def tab_assistente(month, d):
     try: api_key=api_key or st.secrets.get("ANTHROPIC_API_KEY","")
     except Exception: pass
     if not api_key: st.warning("Configure a chave API em ⚙️ Configurações."); return
-    cc=db.cc_total_from_data(d["cc_all"],month); ef=d["ef"]
+    cc=db.cc_total_from_data(d["cc_all"],month)
     t_inc=sum(r["amount"] for r in inc); t_fix=sum(r["amount"] for r in fix)
     t_ext=sum(r["amount"] for r in ext); t_subs=sum(r["amount"] for r in subs if r["active"])
     t_debt_m=sum(r["monthly_payment"] for r in debts); t_debt_t=sum(r["remaining_amount"] for r in debts)
-    t_inv=db.investment_last_total(invs)
+    t_inv=sum(float(r["amount_added"]) for r in invs if r["month"]==month) # Apenas Guardado do mês
     _,c,_=st.columns([1,2,1])
     with c:
         if st.button("🔍 Analisar minha situação financeira", width="stretch"):
-            _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_inv,ef,goals,debts,subs,fix,inc)
+            _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_inv,0,goals,debts,subs,fix,inc)
     key=f"ai_{month}"
     if key in st.session_state:
         st.markdown(f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-left:4px solid #00c896;border-radius:12px;padding:22px 26px;margin-top:18px;font-size:14px;line-height:1.8;color:#374151;max-width:780px;margin-inline:auto">{st.session_state[key].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
@@ -814,7 +865,7 @@ def tab_assistente(month, d):
         qc=st.columns(3)
         for i,q in enumerate(qs):
             if qc[i%3].button(q,key=f"q{i}"):
-                _run_ai_q(api_key,q,month,t_inc,t_fix+cc+t_subs+t_ext,t_debt_t,t_inv,ef)
+                _run_ai_q(api_key,q,month,t_inc,t_fix+cc+t_subs+t_ext,t_debt_t,t_inv,0)
     if f"ai_q_{month}" in st.session_state:
         st.markdown(f'<div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;margin-top:10px;font-size:13px;line-height:1.7;max-width:780px;margin-inline:auto">{st.session_state[f"ai_q_{month}"].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
 
@@ -878,7 +929,7 @@ def tab_config(d):
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Banco de dados</div>', unsafe_allow_html=True)
         st.markdown('<div class="diag-ok">🟢 Supabase + Optimistic UI + AutoPropagação</div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">11.0 — Family Edition</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">LocalState Engine RAM-First</span><br>Versão · <span style="color:#00c896;font-weight:600">11.1 — Family Edition</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         if st.button("🔄 Forçar recarga do banco", width="stretch"):
             LocalState.reload()
@@ -913,7 +964,6 @@ def main():
         st.session_state.month = datetime.now().strftime("%Y-%m")
     month = sidebar(st.session_state.month)
 
-    # ── Mágica: Puxa o cache da RAM instantaneamente (AutoPropagação acontece dentro do DB silenciosamente)
     d = LocalState.get(month)
 
     t1,t2,t3,t4,t5,t6,t7,t8,t9,t10=st.tabs(["📊 Painel", "💰 Renda", "🏠 Contas Fixas", "📋 Planilha", "💳 Variável", "🐷 Guardado", "⚠️ Dívidas", "🎯 Metas", "🤖 IA", "⚙️ Config"])
