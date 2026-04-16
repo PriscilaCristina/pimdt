@@ -13,51 +13,101 @@ USE_PG = bool(DATABASE_URL)
 DB_PATH = "financas.db"
 PH = "%s" if USE_PG else "?"
 
-def _safe_url(url):
-    """Converte URL direta do Supabase para pooler e garante sslmode."""
+def _parse_db_url(url):
+    """
+    Parseia a DATABASE_URL de forma segura, mesmo com @ na senha.
+    Retorna dict com: user, password, host, port, dbname, sslmode.
+    """
     if not url:
-        return url
-    # ── Converte conexão direta (db.XXX.supabase.co:5432) para pooler ──
-    # A conexão direta é bloqueada pelo Supabase para IPs dinâmicos
-    # (como Streamlit Cloud, Railway, Render, etc.)
+        return None
+    # Remove scheme
+    rest = url
+    for scheme in ("postgresql://", "postgres://"):
+        if rest.startswith(scheme):
+            rest = rest[len(scheme):]
+            break
+    # Separa query params (?sslmode=require etc)
+    params = {}
+    if "?" in rest:
+        rest, qs = rest.rsplit("?", 1)
+        for pair in qs.split("&"):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                params[k] = v
+    # Separa dbname (tudo depois do último /)
+    dbname = "postgres"
+    if "/" in rest:
+        rest, dbname = rest.rsplit("/", 1)
+    # Separa credentials do host usando o ÚLTIMO @
+    # Isso é crucial quando a senha contém @
+    last_at = rest.rfind("@")
+    if last_at == -1:
+        return None
+    creds = rest[:last_at]
+    hostport = rest[last_at + 1:]
+    # Separa user:password (primeiro : nas credenciais)
+    if ":" in creds:
+        user, password = creds.split(":", 1)
+    else:
+        user, password = creds, ""
+    # Separa host:port
+    if ":" in hostport:
+        host, port_str = hostport.rsplit(":", 1)
+        try:
+            port = int(port_str)
+        except ValueError:
+            host, port = hostport, 5432
+    else:
+        host, port = hostport, 5432
+    params.setdefault("sslmode", "require")
+    return {
+        "user": user, "password": password,
+        "host": host, "port": port,
+        "dbname": dbname, **params,
+    }
+
+def _get_conn_params():
+    """
+    Retorna os parâmetros de conexão, convertendo URL direta para pooler.
+    Suporta senhas com caracteres especiais (@, #, %, etc).
+    """
+    p = _parse_db_url(DATABASE_URL)
+    if not p:
+        return None
+    # ── Detecta conexão direta e converte para pooler ──
     import re
-    m = re.search(r'@db\.([a-z0-9]+)\.supabase\.co:(\d+)', url)
+    m = re.match(r'^db\.([a-z0-9]+)\.supabase\.co$', p["host"])
     if m:
         project_ref = m.group(1)
-        # Detectar região pelo projeto (default: sa-east-1 para BR)
-        region = os.environ.get("SUPABASE_REGION", "")
-        if not region:
-            try:
-                import streamlit as _st
-                region = _st.secrets.get("SUPABASE_REGION", "")
-            except Exception:
-                pass
-        if not region:
-            region = "sa-east-1"  # default Brasil
-        # Substitui para pooler (session mode, porta 5432)
-        old_host = f"db.{project_ref}.supabase.co:{m.group(2)}"
-        new_host = f"aws-0-{region}.pooler.supabase.com:6543"
-        url = url.replace(old_host, new_host)
-        # Ajusta user: pooler precisa de postgres.PROJECT_REF
-        url = url.replace("postgres:", f"postgres.{project_ref}:", 1)
-        url = url.replace("postgresql://postgres:", f"postgresql://postgres.{project_ref}:", 1)
-        # Evita duplicação se já tiver o project_ref
-        double = f"postgres.{project_ref}.{project_ref}"
-        if double in url:
-            url = url.replace(double, f"postgres.{project_ref}")
-    # ── Garante sslmode ──
-    if "sslmode" not in url:
-        sep = "&" if "?" in url else "?"
-        url = url + sep + "sslmode=require"
-    return url
+        region = ""
+        try:
+            import streamlit as _st
+            region = _st.secrets.get("SUPABASE_REGION", "")
+        except Exception:
+            pass
+        region = region or os.environ.get("SUPABASE_REGION", "") or "sa-east-1"
+        p["host"] = f"aws-0-{region}.pooler.supabase.com"
+        p["port"] = 6543
+        # Pooler precisa de postgres.PROJECT_REF como user
+        if p["user"] == "postgres":
+            p["user"] = f"postgres.{project_ref}"
+    return p
 
 def _conn():
     if USE_PG:
         import psycopg2, psycopg2.extras
+        p = _get_conn_params()
+        if not p:
+            raise RuntimeError("DATABASE_URL inválida — não foi possível parsear.")
         return psycopg2.connect(
-            _safe_url(DATABASE_URL),
+            user=p["user"],
+            password=p["password"],
+            host=p["host"],
+            port=p["port"],
+            dbname=p["dbname"],
+            sslmode=p.get("sslmode", "require"),
             connect_timeout=20,
-            cursor_factory=psycopg2.extras.RealDictCursor
+            cursor_factory=psycopg2.extras.RealDictCursor,
         )
     import sqlite3
     c = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -120,36 +170,42 @@ def init_db():
 
 def _init_pg():
     import psycopg2
-    url = _safe_url(DATABASE_URL)
-    # ── Tenta conectar com mensagem de erro detalhada ──
+    p = _get_conn_params()
+    if not p:
+        raise RuntimeError(
+            "❌ DATABASE_URL inválida.\n\n"
+            "Formato esperado nos Secrets:\n"
+            'DATABASE_URL = "postgresql://postgres:SUA_SENHA@db.XXXX.supabase.co:5432/postgres"'
+        )
+    masked = f"{p['user']}:***@{p['host']}:{p['port']}/{p['dbname']}"
     try:
-        conn = psycopg2.connect(url, connect_timeout=20)
+        conn = psycopg2.connect(
+            user=p["user"],
+            password=p["password"],
+            host=p["host"],
+            port=p["port"],
+            dbname=p["dbname"],
+            sslmode=p.get("sslmode", "require"),
+            connect_timeout=20,
+        )
     except psycopg2.OperationalError as e:
         err_msg = str(e)
-        # Monta dica baseada no erro
         hint = ""
         if "password authentication failed" in err_msg:
-            hint = "→ Senha incorreta no DATABASE_URL. Substitua [YOUR-PASSWORD] pela senha real do projeto Supabase."
+            hint = "→ Senha incorreta. Verifique a senha no DATABASE_URL."
         elif "could not translate host" in err_msg or "Name or service not known" in err_msg:
-            hint = "→ Host inválido. Verifique o project-ref na URL."
+            hint = f"→ Host '{p['host']}' não encontrado. Verifique o project-ref."
         elif "timeout" in err_msg.lower() or "could not connect" in err_msg.lower():
-            hint = (
-                "→ Conexão bloqueada. O Supabase bloqueia conexões diretas de IPs dinâmicos.\n"
-                "   Use a URL do Connection Pooler:\n"
-                "   Supabase → Settings → Database → Connection string → URI → modo 'Transaction'\n"
-                "   Formato: postgresql://postgres.PROJECT:SENHA@aws-0-REGIAO.pooler.supabase.com:6543/postgres"
-            )
+            hint = "→ Conexão bloqueada ou timeout. O db.py já converte para pooler automaticamente."
         elif "SSL" in err_msg.upper():
-            hint = "→ Problema de SSL. Tente adicionar ?sslmode=require na URL."
+            hint = "→ Problema de SSL."
         else:
-            hint = "→ Verifique se o DATABASE_URL nos Secrets está correto."
+            hint = "→ Verifique o DATABASE_URL nos Secrets."
         raise RuntimeError(
             f"❌ Erro ao conectar no banco de dados.\n\n"
-            f"URL usada (mascarada): {_mask_url(url)}\n\n"
+            f"Conectando em: {masked}\n\n"
             f"Erro: {err_msg}\n\n"
-            f"{hint}\n\n"
-            f"Formato esperado:\n"
-            f"postgresql://postgres.SEU-PROJECT:SUA-SENHA@aws-0-sa-east-1.pooler.supabase.com:6543/postgres"
+            f"{hint}"
         )
     # ── Cria tabelas ──
     cur = conn.cursor()
@@ -162,11 +218,6 @@ def _init_pg():
             except Exception:
                 conn.rollback()
     conn.close()
-
-def _mask_url(url):
-    """Mascara a senha na URL para exibição segura."""
-    import re
-    return re.sub(r'://([^:]+):([^@]+)@', r'://\1:***@', url or "")
 
 def _init_sq():
     import sqlite3
