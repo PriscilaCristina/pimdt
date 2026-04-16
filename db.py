@@ -130,33 +130,72 @@ def undo_last():
     except Exception as e:
         return False, str(e)
 
+# ── PROPAGAÇÃO AUTOMÁTICA ─────────────────────────────────────────────────────
+def copy_income_prev(month: str) -> int:
+    y, m = int(month[:4]), int(month[5:])
+    m -= 1
+    if m == 0: y -= 1; m = 12
+    prev = f"{y}-{m:02d}"
+    rows = _fetch("SELECT label,amount,due_day FROM income WHERE month=%s", (prev,))
+    for r in rows:
+        _exec("INSERT INTO income(month,label,amount,due_day) VALUES(%s,%s,%s,%s)",
+              (month, r["label"], r["amount"], r["due_day"]))
+    return len(rows)
+
+def copy_fixed_prev(month: str) -> int:
+    y, m = int(month[:4]), int(month[5:])
+    m -= 1
+    if m == 0: y -= 1; m = 12
+    prev = f"{y}-{m:02d}"
+    rows = _fetch("SELECT label,amount,due_day,category FROM fixed_expenses WHERE month=%s", (prev,))
+    for r in rows:
+        _exec("INSERT INTO fixed_expenses(month,label,amount,due_day,category) VALUES(%s,%s,%s,%s,%s)",
+              (month, r["label"], r["amount"], r["due_day"], r["category"]))
+    return len(rows)
+
 def get_month_data(month: str) -> dict:
     with _conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         d: dict = {}
-        cur.execute("SELECT * FROM income            WHERE month=%s ORDER BY due_day,id", (month,))
+        
+        # Renda: Busca e propaga automaticamente
+        cur.execute("SELECT * FROM income WHERE month=%s ORDER BY due_day,id", (month,))
         d["income"] = [dict(r) for r in cur.fetchall()]
-        cur.execute("SELECT * FROM fixed_expenses    WHERE month=%s ORDER BY due_day,id", (month,))
+        if not d["income"]:
+            if copy_income_prev(month) > 0:
+                cur.execute("SELECT * FROM income WHERE month=%s ORDER BY due_day,id", (month,))
+                d["income"] = [dict(r) for r in cur.fetchall()]
+
+        # Contas Fixas: Busca e propaga automaticamente
+        cur.execute("SELECT * FROM fixed_expenses WHERE month=%s ORDER BY due_day,id", (month,))
         d["fixed"] = [dict(r) for r in cur.fetchall()]
+        if not d["fixed"]:
+            if copy_fixed_prev(month) > 0:
+                cur.execute("SELECT * FROM fixed_expenses WHERE month=%s ORDER BY due_day,id", (month,))
+                d["fixed"] = [dict(r) for r in cur.fetchall()]
+
         cur.execute("SELECT * FROM extra_expenses    WHERE month=%s ORDER BY id",         (month,))
         d["extras"] = [dict(r) for r in cur.fetchall()]
         cur.execute("SELECT * FROM bills             WHERE month=%s ORDER BY due_day,label", (month,))
         d["bills"] = [dict(r) for r in cur.fetchall()]
         cur.execute("SELECT * FROM payments          WHERE month=%s",                     (month,))
         d["payments"] = [dict(r) for r in cur.fetchall()]
+        
         cur.execute("SELECT balance FROM emergency_fund WHERE month=%s",                  (month,))
         r = cur.fetchone()
         d["ef"] = float(r["balance"]) if r else 0.0
+        
         cur.execute("SELECT * FROM subscriptions ORDER BY active DESC, label")
         d["subs"] = [dict(r) for r in cur.fetchall()]
         cur.execute("SELECT * FROM credit_card_items ORDER BY created_at DESC")
         d["cc_all"] = [dict(r) for r in cur.fetchall()]
         cur.execute("SELECT * FROM debts ORDER BY interest_rate DESC")
         d["debts"] = [dict(r) for r in cur.fetchall()]
+        
+        # Tabela Investments reaproveitada para "Guardado"
         cur.execute("SELECT * FROM investments ORDER BY month")
         d["investments"] = [dict(r) for r in cur.fetchall()]
-        cur.execute("SELECT * FROM insurance ORDER BY label")
-        d["insurance"] = [dict(r) for r in cur.fetchall()]
+        
         cur.execute("SELECT * FROM goals ORDER BY deadline")
         d["goals"] = [dict(r) for r in cur.fetchall()]
         cur.execute("SELECT * FROM bill_templates ORDER BY due_day, label")
@@ -208,10 +247,7 @@ def is_paid_fast(payments: list, month: str, itype: str, iid: int) -> bool:
     return False
 
 def investment_last_total(investments: list) -> float:
-    return float(investments[-1]["total_accumulated"]) if investments else 0.0
-
-def insurance_total_from_data(insurance: list) -> float:
-    return sum(float(r["monthly_cost"]) for r in insurance)
+    return sum(float(r["amount_added"]) for r in investments)
 
 def months_to_zero(rem: float, mp: float, rate_pct: float) -> int:
     if mp <= 0: return 9999
@@ -219,12 +255,6 @@ def months_to_zero(rem: float, mp: float, rate_pct: float) -> int:
     if r == 0: return int(rem / mp) + 1
     if mp <= rem * r: return 9999
     return math.ceil(math.log(mp / (mp - rem * r)) / math.log(1 + r))
-
-def investment_projection(cur: float, mp: float, apr: float, yrs: int) -> float:
-    r = (apr / 100) / 12
-    n = yrs * 12
-    if r == 0: return cur + mp * n
-    return cur * (1 + r) ** n + mp * ((1 + r) ** n - 1) / r
 
 def add_income(m, l, a, d=30):
     rid = _exec("INSERT INTO income(month,label,amount,due_day) VALUES(%s,%s,%s,%s) RETURNING id", (m, l, a, d))
@@ -256,19 +286,6 @@ def del_fixed(rid):
     before = _one("SELECT * FROM fixed_expenses WHERE id=%s", (rid,))
     _hist("DELETE", "fixed_expenses", rid, before)
     _exec("DELETE FROM fixed_expenses WHERE id=%s", (rid,))
-
-def copy_fixed_prev(month: str) -> int:
-    y, m = int(month[:4]), int(month[5:])
-    m -= 1
-    if m == 0: y -= 1; m = 12
-    prev = f"{y}-{m:02d}"
-    n = (_one("SELECT COUNT(*) as n FROM fixed_expenses WHERE month=%s", (month,)) or {}).get("n", 0)
-    if n > 0: return 0
-    rows = _fetch("SELECT label,amount,due_day,category FROM fixed_expenses WHERE month=%s", (prev,))
-    for r in rows:
-        _exec("INSERT INTO fixed_expenses(month,label,amount,due_day,category) VALUES(%s,%s,%s,%s,%s)",
-              (month, r["label"], r["amount"], r["due_day"], r["category"]))
-    return len(rows)
 
 def add_cc(l, tot, inst, sm, cn="Cartão Principal"):
     rid = _exec("INSERT INTO credit_card_items(label,total_amount,installments,start_month,card_name) VALUES(%s,%s,%s,%s,%s) RETURNING id",
@@ -312,29 +329,13 @@ def update_debt_due_day(rid, d):
 def del_debt(rid):
     _exec("DELETE FROM debts WHERE id=%s", (rid,))
 
-def upsert_investment(month, aa, ta, tp, source, due_day=30, notes=""):
-    _exec(
-        "INSERT INTO investments(month,amount_added,total_accumulated,investment_type,investment_source,due_day,notes) "
-        "VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(month) DO UPDATE SET "
-        "amount_added=EXCLUDED.amount_added, total_accumulated=EXCLUDED.total_accumulated, "
-        "investment_type=EXCLUDED.investment_type, investment_source=EXCLUDED.investment_source, "
-        "due_day=EXCLUDED.due_day, notes=EXCLUDED.notes",
-        (month, aa, ta, tp, source, due_day, notes),
-    )
-
-def del_investment(rid):
-    _exec("DELETE FROM investments WHERE id=%s", (rid,))
-
-def add_insurance(l, pv, mc, cv, due_day=30, notes=""):
-    rid = _exec("INSERT INTO insurance(label,provider,monthly_cost,coverage,due_day,notes) VALUES(%s,%s,%s,%s,%s,%s) RETURNING id",
-          (l, pv, mc, cv, due_day, notes))
+def add_guardado(month, a, l):
+    # Reutilizamos a tabela 'investments' para salvar o Guardado
+    rid = _exec("INSERT INTO investments(month,amount_added,notes) VALUES(%s,%s,%s) RETURNING id", (month, a, l))
     return rid
 
-def update_insurance_due_day(rid, d):
-    _exec("UPDATE insurance SET due_day=%s WHERE id=%s", (d, rid))
-
-def del_insurance(rid):
-    _exec("DELETE FROM insurance WHERE id=%s", (rid,))
+def del_guardado(rid):
+    _exec("DELETE FROM investments WHERE id=%s", (rid,))
 
 def add_goal(l, tg, cur=0, dl="", notes=""):
     rid = _exec("INSERT INTO goals(label,target_amount,current_amount,deadline,notes) VALUES(%s,%s,%s,%s,%s) RETURNING id",
@@ -346,10 +347,6 @@ def update_goal(rid, cur):
 
 def del_goal(rid):
     _exec("DELETE FROM goals WHERE id=%s", (rid,))
-
-def set_ef(month, balance):
-    _exec("INSERT INTO emergency_fund(month,balance) VALUES(%s,%s) ON CONFLICT(month) DO UPDATE SET balance=EXCLUDED.balance",
-          (month, balance))
 
 def add_bill_template(l, est, cat, dd):
     rid = _exec("INSERT INTO bill_templates(label,estimated_amount,category,due_day) VALUES(%s,%s,%s,%s) RETURNING id",
@@ -398,8 +395,7 @@ CREATE TABLE IF NOT EXISTS credit_card_items(id SERIAL PRIMARY KEY, label TEXT, 
 CREATE TABLE IF NOT EXISTS extra_expenses(id SERIAL PRIMARY KEY, month TEXT, label TEXT, amount FLOAT DEFAULT 0, category TEXT DEFAULT 'Outros', payment_method TEXT DEFAULT 'PIX', expense_type TEXT DEFAULT 'extra');
 CREATE TABLE IF NOT EXISTS subscriptions(id SERIAL PRIMARY KEY, label TEXT, amount FLOAT DEFAULT 0, category TEXT DEFAULT 'Entretenimento', billing_day INT DEFAULT 1, active INT DEFAULT 1, notes TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS debts(id SERIAL PRIMARY KEY, label TEXT, total_amount FLOAT, remaining_amount FLOAT, monthly_payment FLOAT DEFAULT 0, interest_rate FLOAT DEFAULT 0, due_day INT DEFAULT 30, notes TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT NOW());
-CREATE TABLE IF NOT EXISTS investments(id SERIAL PRIMARY KEY, month TEXT UNIQUE, amount_added FLOAT DEFAULT 0, total_accumulated FLOAT DEFAULT 0, investment_type TEXT DEFAULT 'Renda Fixa', investment_source TEXT DEFAULT 'Renda do mês', due_day INT DEFAULT 30, notes TEXT DEFAULT '');
-CREATE TABLE IF NOT EXISTS insurance(id SERIAL PRIMARY KEY, label TEXT, provider TEXT DEFAULT '', monthly_cost FLOAT DEFAULT 0, coverage TEXT DEFAULT '', due_day INT DEFAULT 30, notes TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS investments(id SERIAL PRIMARY KEY, month TEXT, amount_added FLOAT DEFAULT 0, total_accumulated FLOAT DEFAULT 0, investment_type TEXT DEFAULT 'Guardado', investment_source TEXT DEFAULT 'Manual', due_day INT DEFAULT 30, notes TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS goals(id SERIAL PRIMARY KEY, label TEXT, target_amount FLOAT, current_amount FLOAT DEFAULT 0, deadline TEXT DEFAULT '', notes TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS emergency_fund(id SERIAL PRIMARY KEY, month TEXT UNIQUE, balance FLOAT DEFAULT 0);
 CREATE TABLE IF NOT EXISTS bill_templates(id SERIAL PRIMARY KEY, label TEXT, estimated_amount FLOAT DEFAULT 0, category TEXT DEFAULT 'Utilidades', due_day INT DEFAULT 10, active INT DEFAULT 1);
