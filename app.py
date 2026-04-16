@@ -1,9 +1,3 @@
-"""
-app.py — minhasFinanças · Família Peixoto
-Performance: @st.cache_resource no pool + @st.cache_data(ttl=8) por mês.
-Uma única chamada batch por página; cache limpo somente após mutações.
-"""
-
 import os, json, hashlib
 import streamlit as st
 from datetime import datetime
@@ -57,7 +51,7 @@ def _mutated():
     st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CACHE DE DADOS — chamado UMA vez por mês, resultado mantido 8 segundos
+# CACHE DE DADOS
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=8, show_spinner=False)
 def _load(month: str) -> dict:
@@ -104,10 +98,6 @@ label{color:var(--body)!important;font-size:12px!important;font-weight:500!impor
 .diag-crit{background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px 14px;color:#991b1b;font-size:13px;margin-bottom:6px}
 </style>"""
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# AUTH
-# ══════════════════════════════════════════════════════════════════════════════
 def login_page():
     _, col, _ = st.columns([1,1.2,1])
     with col:
@@ -121,7 +111,7 @@ def login_page():
         </div>""", unsafe_allow_html=True)
         pwd = st.text_input("Senha de acesso", type="password", placeholder="Digite sua senha...")
         lembre = st.checkbox("Continuar logado neste navegador", value=True)
-        if st.button("Entrar →", use_container_width=True):
+        if st.button("Entrar →", width="stretch"):
             secret_hash = ""
             try: secret_hash = st.secrets.get("PASSWORD_HASH","")
             except Exception: pass
@@ -133,10 +123,8 @@ def login_page():
                     except Exception: pass
                 st.rerun()
             else:
-                st.error("Senha incorreta. Padrão: 1234")
-        st.markdown('<p style="text-align:center;color:#d1d5db;font-size:11px;margin-top:14px">🟢 Supabase · Dados seguros</p>',
-                    unsafe_allow_html=True)
-
+                st.error("Senha incorreta.")
+        st.markdown('<p style="text-align:center;color:#d1d5db;font-size:11px;margin-top:14px">🟢 Supabase · Dados seguros</p>', unsafe_allow_html=True)
 
 def sidebar(month):
     with st.sidebar:
@@ -151,37 +139,31 @@ def sidebar(month):
             if st.button("◀", key="p"):
                 st.session_state.month = prev_m(month); st.rerun()
         with c2:
-            st.markdown(f'<div style="text-align:center;padding:6px 0;font-size:14px;font-weight:600;color:#1a2332">{ML(month)}</div>',
-                        unsafe_allow_html=True)
+            st.markdown(f'<div style="text-align:center;padding:6px 0;font-size:14px;font-weight:600;color:#1a2332">{ML(month)}</div>', unsafe_allow_html=True)
         with c3:
             if st.button("▶", key="n"):
                 st.session_state.month = next_m(month); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
         st.divider()
-        if st.button("↩ Desfazer última ação", use_container_width=True):
+        if st.button("↩ Desfazer última ação", width="stretch"):
             ok, msg = db.undo_last()
             (st.success if ok else st.warning)(msg)
             _mutated()
         st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
-        if st.button("⊕ Copiar mês anterior", use_container_width=True):
+        if st.button("⊕ Copiar mês anterior", width="stretch"):
             n = db.copy_fixed_prev(month)
             st.success(f"{n} itens copiados") if n > 0 else st.info("Já existem ou nenhum.")
             _mutated()
         st.divider()
-        st.markdown('<div style="font-size:10px;color:#16a34a;text-align:center;padding:2px 0">🟢 Supabase conectado</div>',
-                    unsafe_allow_html=True)
+        st.markdown('<div style="font-size:10px;color:#16a34a;text-align:center;padding:2px 0">🟢 Supabase conectado</div>', unsafe_allow_html=True)
         st.divider()
-        if st.button("↪ Sair", use_container_width=True):
+        if st.button("↪ Sair", width="stretch"):
             st.session_state.auth = False
             try: st.query_params.clear()
             except Exception: pass
             st.rerun()
     return st.session_state.month
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PAINEL
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_painel(month, d):
     inc   = d["income"]
     fix   = d["fixed"]
@@ -235,7 +217,6 @@ def tab_painel(month, d):
 
     left, right = st.columns([1.1,1], gap="medium")
     with left:
-        # Entradas
         st.markdown('<div class="card card-green">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Entradas</div>', unsafe_allow_html=True)
         for due in [15, 30]:
@@ -263,7 +244,6 @@ def tab_painel(month, d):
         st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total</span><span style="color:#16a34a;font-family:DM Mono,monospace">{R(t_inc)}</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Reserva
         st.markdown('<div class="card card-blue">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Reserva de Emergência</div>', unsafe_allow_html=True)
         ef_pct = (ef/ef_target*100) if ef_target>0 else 0
@@ -276,7 +256,6 @@ def tab_painel(month, d):
                     db.set_ef(month,nb); db.set_config("ef_target",str(nt_)); _mutated()
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Gráfico
         from collections import defaultdict
         cat_t = defaultdict(float)
         for r in fix:   cat_t[r["category"]] += r["amount"]
@@ -298,7 +277,6 @@ def tab_painel(month, d):
             st.markdown('</div>', unsafe_allow_html=True)
 
     with right:
-        # Gastos Fixos
         st.markdown('<div class="card card-red">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Gastos Fixos</div>', unsafe_allow_html=True)
         for due in [15,30]:
@@ -330,7 +308,6 @@ def tab_painel(month, d):
         st.markdown(f'<div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--border);font-size:13px;font-weight:600"><span>Total saídas</span><span style="color:#ef4444;font-family:DM Mono,monospace">{R(t_gasto+t_debt)}</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Diagnóstico
         st.markdown('<div class="card">', unsafe_allow_html=True)
         cd1,cd2=st.columns([3,1])
         cd1.markdown('<div class="sec" style="margin-bottom:6px">Diagnóstico</div>', unsafe_allow_html=True)
@@ -367,9 +344,7 @@ def tab_painel(month, d):
                 st.markdown(f'<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span style="font-weight:500">{g["label"]}</span><span style="color:#6b7280">{R(g["current_amount"])} / {R(g["target_amount"])}</span></div>{prog_bar(pct)}</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # Fluxo por ciclo
     _tab_fluxo_ciclos(month, d)
-
 
 def _run_diag(api_key, month, t_inc, t_gasto, t_debt, ef, ext, fix, subs, debts):
     if not api_key:
@@ -394,7 +369,6 @@ def _run_diag(api_key, month, t_inc, t_gasto, t_debt, ef, ext, fix, subs, debts)
             r=client.messages.create(model="claude-haiku-4-5-20251001",max_tokens=300,system=system,messages=[{"role":"user","content":prompt}])
             st.session_state[f"diag_{month}"]=r.content[0].text; st.rerun()
         except Exception as e: st.error(f"Erro: {e}")
-
 
 def _fluxo_ciclo(month, d, ciclo):
     inc=d["income"]; fix=d["fixed"]; bills=d["bills"]; subs=d["subs"]
@@ -426,7 +400,6 @@ def _fluxo_ciclo(month, d, ciclo):
         if _in(dd): gasto_items.append(("inv",inv_this["id"],f"Investimento ({inv_this['investment_type']})",float(inv_this["amount_added"]),dd,"Investimento",""))
     t_gastos=sum(x[3] for x in gasto_items)
     return t_renda, t_gastos, t_renda-t_gastos, renda_items, gasto_items
-
 
 def _tab_fluxo_ciclos(month, d):
     st.markdown("---")
@@ -484,14 +457,9 @@ def _tab_fluxo_ciclos(month, d):
             bdr="#bbf7d0" if sobra>=0 else "#fecaca"
             st.markdown(f'<div style="background:{bg};border:1px solid {bdr};border-top:3px solid {cor_s};border-radius:12px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:{cor_s};margin-bottom:4px">{"✅" if sobra>=0 else "⚠️"} Sobra do ciclo dia {ciclo}</div><div style="font-size:11px;color:{cor_s};opacity:.8">{R(t_renda)} renda — {R(t_gastos)} gastos</div></div><div style="font-size:24px;font-weight:700;color:{cor_s};font-family:DM Mono,monospace">{R(sobra)}</div></div>', unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONTAS FIXAS
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_contas(month, d):
     bills     = d["bills"]
     templates = d["bill_templates"]
-    # Gera contas dos modelos se ainda não existirem
     if db.generate_bills_from_templates(month, bills, templates) > 0:
         _mutated()
     t_bills = sum(r["amount"] for r in bills)
@@ -531,7 +499,7 @@ def tab_contas(month, d):
             l=st.text_input("Conta","",placeholder="Ex: Conta de Luz"); a=st.number_input("Valor (R$)",min_value=0.,step=1.)
             ca=st.selectbox("Categoria",["Utilidades","Moradia","Comunicação","Outros"])
             dd=st.number_input("Dia venc.",min_value=1,max_value=31,value=10)
-            if st.form_submit_button("Adicionar",use_container_width=True):
+            if st.form_submit_button("Adicionar", width="stretch"):
                 if l and a>0: db.upsert_bill(month,l,a,ca,int(dd)); _mutated()
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -540,14 +508,10 @@ def tab_contas(month, d):
             l=st.text_input("Nome","",placeholder="Ex: Conta de Água"); a=st.number_input("Estimativa (R$)",min_value=0.,step=5.)
             ca=st.selectbox("Categoria",["Utilidades","Moradia","Comunicação","Outros"])
             dd=st.number_input("Dia",min_value=1,max_value=31,value=10)
-            if st.form_submit_button("Criar",use_container_width=True):
+            if st.form_submit_button("Criar", width="stretch"):
                 if l: db.add_bill_template(l,a,ca,int(dd)); _mutated()
         st.markdown('</div>', unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PLANILHA
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_planilha(month, d):
     inc   = d["income"];  fix=d["fixed"];  bills=d["bills"]
     cc_its= db.cc_items_from_data(d["cc_all"],month)
@@ -611,10 +575,6 @@ def tab_planilha(month, d):
         pct_pago=(t_paid/t_exp*100) if t_exp>0 else 0
         st.markdown(f'<div class="card"><div class="sec">Progresso</div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:#16a34a">Pago: {R(t_paid)}</span><span style="color:#ea580c">Pendente: {R(t_pend)}</span></div>{prog_bar(pct_pago)}<div style="font-size:10px;color:#6b7280;margin-top:3px">{pct_pago:.0f}% pago</div></div>', unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VARIÁVEL
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_variavel(month, d):
     sub1,sub2,sub3,sub4=st.tabs(["💳 Cartão","🎬 Saídas","💸 Gastos Extras","📱 Assinaturas"])
     cc_all=d["cc_all"]; subs=d["subs"]; cfg=d["config"]
@@ -657,7 +617,7 @@ def tab_variavel(month, d):
                 l=st.text_input("Descrição","",placeholder="Ex: Notebook…"); a=st.number_input("Valor total (R$)",min_value=0.,step=10.,key="cc_valor")
                 n=st.number_input("Parcelas",min_value=1,max_value=60,value=1,key="cc_parcelas")
                 sm=st.text_input("Mês inicial",value=month); cn=st.text_input("Cartão","Cartão Principal")
-                if st.form_submit_button("Adicionar",use_container_width=True):
+                if st.form_submit_button("Adicionar", width="stretch"):
                     if l and a>0: db.add_cc(l,a,int(n),sm,cn); _mutated()
             a_val=st.session_state.get("cc_valor",0.0); n_val=st.session_state.get("cc_parcelas",1)
             if n_val>1 and a_val>0:
@@ -667,7 +627,7 @@ def tab_variavel(month, d):
             st.markdown('<div class="sec">Colar Fatura (IA)</div>', unsafe_allow_html=True)
             fatura=st.text_area("Texto da fatura","",height=100,placeholder="Cole aqui…",key="fatura_txt")
             card_n=st.text_input("Cartão","Cartão Principal",key="fatura_card")
-            if st.button("Processar com IA",key="proc_f",use_container_width=True):
+            if st.button("Processar com IA",key="proc_f", width="stretch"):
                 if api_key and fatura: _parse_fatura(api_key,fatura,month,card_n)
                 elif not api_key: st.warning("Configure a chave API.")
                 else: st.warning("Cole o texto.")
@@ -702,7 +662,7 @@ def tab_variavel(month, d):
             with st.form("add_saida"):
                 l=st.text_input("Descrição","",placeholder="Ex: Cinema, Restaurante…"); a=st.number_input("Valor (R$)",min_value=0.,step=5.)
                 ca=st.selectbox("Categoria",CATS); pm=st.selectbox("Pagamento",PAY)
-                if st.form_submit_button("Registrar",use_container_width=True):
+                if st.form_submit_button("Registrar", width="stretch"):
                     if l and a>0: db.add_extra(month,l,a,ca,pm,"saida"); _mutated()
                     else: st.warning("Preencha os campos.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -732,7 +692,7 @@ def tab_variavel(month, d):
             with st.form("add_extra"):
                 l=st.text_input("Descrição","",placeholder="Ex: Padaria, Farmácia…"); a=st.number_input("Valor (R$)",min_value=0.,step=5.)
                 ca=st.selectbox("Categoria",CATS); pm=st.selectbox("Método",["PIX","Dinheiro","Transferência","Débito","Outro"])
-                if st.form_submit_button("Registrar",use_container_width=True):
+                if st.form_submit_button("Registrar", width="stretch"):
                     if l and a>0: db.add_extra(month,l,a,ca,pm,"extra"); _mutated()
                     else: st.warning("Preencha os campos.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -765,10 +725,9 @@ def tab_variavel(month, d):
                 l=st.text_input("Serviço","",placeholder="Ex: Netflix…"); a=st.number_input("Valor/mês",min_value=0.,step=1.)
                 ca=st.selectbox("Categoria",["Entretenimento","Educação","Software","Saúde","Outros"])
                 bd=st.number_input("Dia débito",min_value=1,max_value=31,value=1)
-                if st.form_submit_button("Adicionar",use_container_width=True):
+                if st.form_submit_button("Adicionar", width="stretch"):
                     if l and a>0: db.add_sub(l,a,ca,int(bd)); _mutated()
             st.markdown('</div>', unsafe_allow_html=True)
-
 
 def _parse_fatura(api_key, text, month, card_name):
     import anthropic as _ant
@@ -784,10 +743,6 @@ def _parse_fatura(api_key, text, month, card_name):
         st.success(f"✅ {count} item(s) importado(s)!"); _mutated()
     except Exception as e: st.error(f"Erro: {e}")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# INVESTIMENTOS & SEGUROS
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_investimentos(month, d):
     invs=d["investments"]; ins=d["insurance"]; cfg=d["config"]
     annual_rate=float(cfg.get("inv_rate","12") or 12)
@@ -835,7 +790,7 @@ def tab_investimentos(month, d):
                 auto_total=current_total+aad if "Renda do mês" in source else current_total
                 if aad>0: st.info(f"Total calculado: {R(auto_total)}")
                 override=st.number_input("Total acumulado real (R$)",value=float(auto_total),step=100.); nt_=st.text_input("Observações","")
-                if st.form_submit_button("Salvar",use_container_width=True):
+                if st.form_submit_button("Salvar", width="stretch"):
                     if aad>0: db.upsert_investment(sm,aad,float(override),tp,source,int(ciclo_inv),nt_); _mutated()
                     else: st.warning("Informe o valor.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -844,7 +799,7 @@ def tab_investimentos(month, d):
             with st.form("inv_cfg"):
                 nc=st.number_input("Aporte mensal planejado (R$)",value=float(monthly_contrib),step=100.)
                 nr=st.number_input("Taxa anual esperada (%)",value=float(annual_rate),step=0.5)
-                if st.form_submit_button("Atualizar",use_container_width=True):
+                if st.form_submit_button("Atualizar", width="stretch"):
                     db.set_config("inv_contrib",str(nc)); db.set_config("inv_rate",str(nr)); _mutated()
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -879,17 +834,13 @@ def tab_investimentos(month, d):
                 l=st.text_input("Tipo","",placeholder="Ex: Seguro de Vida"); tp_ins=st.selectbox("Categoria",["Vida","Saúde","Carro","Casa/Residencial","Viagem","Outros"])
                 pv_=st.text_input("Seguradora","",placeholder="Ex: Bradesco Seguros"); ap=st.text_input("Nº Apólice",""); cv=st.text_input("Cobertura","",placeholder="Ex: R$ 500k")
                 mc=st.number_input("Custo mensal (R$)",min_value=0.,step=10.); ciclo_seg=st.selectbox("Ciclo",[30,15]); nt_=st.text_input("Obs.","")
-                if st.form_submit_button("Cadastrar",use_container_width=True):
+                if st.form_submit_button("Cadastrar", width="stretch"):
                     if l and mc>0:
                         notes=f"Tipo: {tp_ins}"+(f" · Apólice: {ap}" if ap else "")+(f" · {nt_}" if nt_ else "")
                         db.add_insurance(l,pv_,mc,cv,int(ciclo_seg),notes); _mutated()
                     else: st.warning("Preencha nome e custo.")
             st.markdown('</div>', unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DÍVIDAS
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_dividas(d):
     debts=d["debts"]
     t_rem=sum(r["remaining_amount"] for r in debts); t_mp=sum(r["monthly_payment"] for r in debts)
@@ -933,15 +884,11 @@ def tab_dividas(d):
             l=st.text_input("Descrição","",placeholder="Ex: Empréstimo…"); total=st.number_input("Valor original (R$)",min_value=0.,step=100.)
             rem=st.number_input("Saldo devedor (R$)",min_value=0.,step=100.); mp=st.number_input("Parcela mensal (R$)",min_value=0.,step=50.)
             ir=st.number_input("Juros mensais (%)",min_value=0.,step=0.1); ciclo_d=st.selectbox("Ciclo",[30,15]); nt_=st.text_input("Obs.","")
-            if st.form_submit_button("Cadastrar",use_container_width=True):
+            if st.form_submit_button("Cadastrar", width="stretch"):
                 if l and total>0 and mp>0: db.add_debt(l,total,rem or total,mp,ir,int(ciclo_d),nt_); _mutated()
                 else: st.warning("Preencha os campos.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# METAS
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_metas(d):
     goals=d["goals"]
     t_tg=sum(g["target_amount"] for g in goals); t_cur=sum(g["current_amount"] for g in goals)
@@ -969,15 +916,11 @@ def tab_metas(d):
         with st.form("add_goal"):
             l=st.text_input("Meta","",placeholder="Ex: Viagem Europa…"); tg=st.number_input("Valor alvo (R$)",min_value=0.,step=500.)
             cur_g=st.number_input("Já tenho (R$)",min_value=0.,step=100.); dl=st.text_input("Prazo",""); nt_=st.text_input("Obs.","")
-            if st.form_submit_button("Cadastrar",use_container_width=True):
+            if st.form_submit_button("Cadastrar", width="stretch"):
                 if l and tg>0: db.add_goal(l,tg,cur_g,dl,nt_); _mutated()
                 else: st.warning("Preencha os campos.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONSULTOR IA
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_assistente(month, d):
     st.markdown('<div style="text-align:center;padding:10px 0 20px"><h2 style="font-size:22px;font-weight:700;color:#1a2332;margin:0">Consultor Financeiro IA</h2><p style="color:#6b7280;font-size:13px;margin-top:5px">Análise direta — estilo <b>Bruno Perini</b> e <b>Thiago Nigro</b></p></div>', unsafe_allow_html=True)
     cfg=d["config"]; inc=d["income"]; fix=d["fixed"]; ext=d["extras"]; subs=d["subs"]
@@ -993,7 +936,7 @@ def tab_assistente(month, d):
     t_inv=db.investment_last_total(invs)
     _,c,_=st.columns([1,2,1])
     with c:
-        if st.button("🔍 Analisar minha situação financeira",use_container_width=True):
+        if st.button("🔍 Analisar minha situação financeira", width="stretch"):
             _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_inv,ef,goals,debts,subs,fix,inc)
     key=f"ai_{month}"
     if key in st.session_state:
@@ -1005,7 +948,6 @@ def tab_assistente(month, d):
                 _run_ai_q(api_key,q,month,t_inc,t_fix+cc+t_subs+t_ext,t_debt_t,t_inv,ef)
     if f"ai_q_{month}" in st.session_state:
         st.markdown(f'<div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;margin-top:10px;font-size:13px;line-height:1.7;max-width:780px;margin-inline:auto">{st.session_state[f"ai_q_{month}"].replace(chr(10),"<br>")}</div>', unsafe_allow_html=True)
-
 
 def _run_ai_full(api_key,month,t_inc,t_fix,t_ext,t_subs,cc,t_debt_m,t_debt_t,t_inv,ef,goals,debts,subs,fix,inc):
     import anthropic as _ant
@@ -1033,10 +975,6 @@ def _run_ai_q(api_key,question,month,t_inc,t_gasto,t_debt,t_inv,ef):
             st.session_state[f"ai_q_{month}"]=r.content[0].text; st.rerun()
         except Exception as e: st.error(f"Erro: {e}")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURAÇÕES
-# ══════════════════════════════════════════════════════════════════════════════
 def tab_config(d):
     cfg=d["config"]
     st.markdown('<h2 style="font-size:20px;font-weight:700;color:#1a2332;margin:0 0 18px">Configurações</h2>', unsafe_allow_html=True)
@@ -1046,7 +984,7 @@ def tab_config(d):
         st.markdown('<div class="sec">Alterar Senha</div>', unsafe_allow_html=True)
         with st.form("pwd"):
             cur_=st.text_input("Senha atual",type="password"); n1=st.text_input("Nova senha",type="password"); n2=st.text_input("Confirmar",type="password")
-            if st.form_submit_button("Alterar",use_container_width=True):
+            if st.form_submit_button("Alterar", width="stretch"):
                 if not db.check_pwd(cur_): st.error("Senha incorreta.")
                 elif n1!=n2: st.error("Senhas não coincidem.")
                 elif len(n1)<4: st.error("Mínimo 4 caracteres.")
@@ -1054,7 +992,7 @@ def tab_config(d):
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Desfazer</div>', unsafe_allow_html=True)
-        if st.button("↩ Desfazer última ação",use_container_width=True):
+        if st.button("↩ Desfazer última ação", width="stretch"):
             ok,msg=db.undo_last(); (st.success if ok else st.warning)(msg); _mutated()
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -1068,30 +1006,25 @@ def tab_config(d):
         st.markdown(f'<p style="font-size:12px;color:#6b7280;margin-bottom:8px">Atual: <code>{masked}</code></p>', unsafe_allow_html=True)
         with st.form("api"):
             k=st.text_input("Nova chave","",placeholder="sk-ant-…")
-            if st.form_submit_button("Salvar",use_container_width=True):
+            if st.form_submit_button("Salvar", width="stretch"):
                 if k.startswith("sk-"): db.set_api_key(k); st.success("✅ Salva."); _mutated()
                 else: st.warning("Deve começar com 'sk-'")
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="sec">Banco de dados</div>', unsafe_allow_html=True)
-        st.markdown('<div class="diag-ok">🟢 Supabase (Pooler) conectado<br><code style="font-size:10px">aws-0-sa-east-1.pooler.supabase.com:6543</code></div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">@st.cache_data TTL 8s por mês</span><br>Versão · <span style="color:#00c896;font-weight:600">9.0 — Performance Edition</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="diag-ok">🟢 Supabase conectado via Secrets</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:12px;color:#6b7280;line-height:2;margin-top:8px">Pool · <span style="color:#374151">2–10 conexões (ThreadedConnectionPool)</span><br>Cache · <span style="color:#374151">@st.cache_data TTL 8s por mês</span><br>Versão · <span style="color:#00c896;font-weight:600">9.2 — Cloud Edition</span></div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
-        if st.button("🔄 Forçar reconexão",use_container_width=True):
+        if st.button("🔄 Forçar reconexão", width="stretch"):
             if "_pool" in st.session_state:
                 try: st.session_state["_pool"].closeall()
                 except Exception: pass
                 del st.session_state["_pool"]
             st.cache_data.clear(); st.rerun()
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MAIN
-# ══════════════════════════════════════════════════════════════════════════════
 def main():
     st.markdown(CSS, unsafe_allow_html=True)
 
-    # ── Pool: inicializa uma vez por sessão ─────────────────────────────────
     if "_pool" not in st.session_state:
         with st.spinner("Conectando ao banco…"):
             ok, err = db.init_db()
@@ -1099,15 +1032,12 @@ def main():
             st.error(f"**Erro de conexão:** {err}")
             st.markdown("""
             **Como corrigir:**
-            1. Verifique `DB_PASSWORD` nos Secrets do Streamlit Cloud  
-            2. Confirme que o host é `aws-0-sa-east-1.pooler.supabase.com`  
-            3. Porta deve ser `6543` (pooler, não 5432)
+            Verifique se suas variáveis (DB_USER, DB_PASSWORD, etc) estão configuradas corretamente nos **Secrets do Streamlit Cloud**.
             """)
-            if st.button("🔄 Tentar reconectar"):
+            if st.button("🔄 Tentar reconectar", width="stretch"):
                 st.rerun()
             return
 
-    # ── Auth ────────────────────────────────────────────────────────────────
     if "auth" not in st.session_state:
         st.session_state.auth = False
     if not st.session_state.auth:
@@ -1118,16 +1048,13 @@ def main():
     if not st.session_state.auth:
         login_page(); return
 
-    # ── Mês ─────────────────────────────────────────────────────────────────
     if "month" not in st.session_state:
         st.session_state.month = datetime.now().strftime("%Y-%m")
     month = sidebar(st.session_state.month)
 
-    # ── Carrega dados em batch (cacheados 8s) ────────────────────────────────
     with st.spinner(""):
         d = _load(month)
 
-    # ── Header ──────────────────────────────────────────────────────────────
     inc  = d["income"]; fix=d["fixed"]; ext=d["extras"]; subs=d["subs"]
     cc   = db.cc_total_from_data(d["cc_all"], month)
     t_inc= sum(r["amount"] for r in inc)
@@ -1162,7 +1089,6 @@ def main():
     with t7: tab_metas(d)
     with t8: tab_assistente(month, d)
     with t9: tab_config(d)
-
 
 if __name__ == "__main__":
     main()
