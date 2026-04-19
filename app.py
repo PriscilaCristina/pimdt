@@ -61,8 +61,11 @@ class LocalState:
         d = db.get_month_data(month)
         t_inc = sum(r["amount"] for r in d["income"])
         cc = db.cc_total_from_data(d["cc_all"], month)
-        t_gas = sum(r["amount"] for r in d["fixed"]) + cc + \
-                sum(r["amount"] for r in d["extras"]) + \
+        
+        # Considera apenas os extras que saíram do salário do mês
+        ext_do_mes = sum(r["amount"] for r in d["extras"] if r.get("fund_source", "Salário do Mês") == "Salário do Mês")
+        
+        t_gas = sum(r["amount"] for r in d["fixed"]) + cc + ext_do_mes + \
                 sum(r["amount"] for r in d["subs"] if r["active"]) + \
                 sum(r["amount"] for r in d["bills"])
         t_debt = sum(r["monthly_payment"] for r in d["debts"])
@@ -221,25 +224,35 @@ def tab_painel(month, d):
     cc       = db.cc_total_from_data(cc_all, month)
     t_inc  = sum(r["amount"] for r in inc)
     t_fix  = sum(r["amount"] for r in fix)
-    t_ext  = sum(r["amount"] for r in ext)
+    
+    # Separação dos Gastos Extras (Mês x Porquinho)
+    t_ext_mes = sum(r["amount"] for r in ext if r.get("fund_source", "Salário do Mês") == "Salário do Mês")
+    t_ext_porquinho = sum(r["amount"] for r in ext if r.get("fund_source") == "Porquinho")
+    t_ext = t_ext_mes + t_ext_porquinho
+    
     t_subs = sum(r["amount"] for r in subs if r["active"])
     t_bills= sum(r["amount"] for r in bills)
     t_debt = sum(r["monthly_payment"] for r in debts)
     
-    t_gasto= t_fix + cc + t_ext + t_subs + t_bills
+    # O gasto mensal passa a considerar apenas o que sai do salário do mês
+    t_gasto= t_fix + cc + t_ext_mes + t_subs + t_bills
     sobra  = t_inc - t_gasto - t_debt
 
-    # ── Cálculos: Ciclo 15 (Vencimentos de 11 a 29)
+    # Helper para descobrir o ciclo (respeita a escolha manual ou deriva do dia)
+    def get_cycle(r):
+        return r.get("payment_cycle") or (15 if 11 <= r.get("due_day", 30) <= 29 else 30)
+
+    # ── Cálculos: Ciclo 15
     inc_15 = sum(r["amount"] for r in inc if 11 <= r["due_day"] <= 29)
-    gas_15 = sum(r["amount"] for r in fix if 11 <= r["due_day"] <= 29) + \
+    gas_15 = sum(r["amount"] for r in fix if get_cycle(r) == 15) + \
              sum(r["amount"] for r in bills if 11 <= r["due_day"] <= 29) + \
              sum(r["amount"] for r in subs if r["active"] and 11 <= r["billing_day"] <= 29) + \
              sum(r["monthly_payment"] for r in debts if 11 <= r.get("due_day", 30) <= 29)
     sobra_15 = inc_15 - gas_15
 
-    # ── Cálculos: Ciclo 30 (Vencimentos de 30 a 10)
+    # ── Cálculos: Ciclo 30
     inc_30 = sum(r["amount"] for r in inc if r["due_day"] >= 30 or r["due_day"] <= 10)
-    gas_30 = sum(r["amount"] for r in fix if r["due_day"] >= 30 or r["due_day"] <= 10) + \
+    gas_30 = sum(r["amount"] for r in fix if get_cycle(r) == 30) + \
              sum(r["amount"] for r in bills if r["due_day"] >= 30 or r["due_day"] <= 10) + \
              sum(r["amount"] for r in subs if r["active"] and (r["billing_day"] >= 30 or r["billing_day"] <= 10)) + \
              sum(r["monthly_payment"] for r in debts if (r.get("due_day", 30) >= 30 or r.get("due_day", 30) <= 10)) + \
@@ -249,7 +262,8 @@ def tab_painel(month, d):
     # ── Guardado / Porquinho
     prev_leftover = LocalState.get_leftover(prev_m(month))
     man_saved = sum(float(r["amount_added"]) for r in d["investments"] if r["month"]==month)
-    total_guardado_mes = man_saved + (prev_leftover if prev_leftover > 0 else 0)
+    # Deduz o que foi gasto tirando do porquinho
+    total_guardado_mes = man_saved + (prev_leftover if prev_leftover > 0 else 0) - t_ext_porquinho
 
     cor = "#16a34a" if sobra >= 0 else "#ef4444"
     cor15 = "#16a34a" if sobra_15 >= 0 else "#ef4444"
@@ -408,12 +422,23 @@ def tab_contas(month, d):
         st.markdown('<div class="sec">Suas Contas Fixas (Sempre iguais)</div>', unsafe_allow_html=True)
         if fix:
             for r in sorted(fix, key=lambda x: x["due_day"]):
-                c1,c2,c3,c4=st.columns([3,2,1,1])
-                c1.markdown(f'<div style="font-size:13px;font-weight:500">{r["label"]}</div><span class="badge b-{"15" if r["due_day"]<=15 else "30"}" style="font-size:9px">{r["category"]} · Dia {r["due_day"]}</span>', unsafe_allow_html=True)
+                # Deriva o ciclo atual
+                current_cycle = r.get("payment_cycle") or (15 if 11 <= r["due_day"] <= 29 else 30)
+                other_cycle = 30 if current_cycle == 15 else 15
+                
+                c1,c2,c3,c4,c5 = st.columns([3,2,0.8,0.8,0.8])
+                c1.markdown(f'<div style="font-size:13px;font-weight:500">{r["label"]}</div><span class="badge b-{"15" if current_cycle==15 else "30"}" style="font-size:9px">{r["category"]} · Ciclo {current_cycle}</span>', unsafe_allow_html=True)
                 c2.markdown(f'<span style="font-family:DM Mono,monospace;color:#ef4444;font-size:13px;padding-top:4px;display:block">{R(r["amount"])}</span>', unsafe_allow_html=True)
-                if c3.button("✎",key=f"ef_{r['id']}"): st.session_state[f"ef_{r['id']}"]=True
-                if c4.button("✕",key=f"df_{r['id']}"): 
+                
+                # Botão para mover ciclo
+                if c3.button(f"→{other_cycle}", key=f"mc_{r['id']}", help=f"Mover para Ciclo {other_cycle}"):
+                    db.update_fixed_cycle(r["id"], other_cycle)
+                    LocalState.update("fixed", r["id"], payment_cycle=other_cycle)
+
+                if c4.button("✎",key=f"ef_{r['id']}"): st.session_state[f"ef_{r['id']}"]=True
+                if c5.button("✕",key=f"df_{r['id']}"): 
                     db.del_fixed(r["id"]); LocalState.remove("fixed", r["id"])
+                    
                 if st.session_state.get(f"ef_{r['id']}"):
                     with st.form(f"eff_{r['id']}"):
                         nl=st.text_input("Descrição",r["label"]); na=st.number_input("Valor",value=float(r["amount"]),step=5.)
@@ -632,10 +657,11 @@ def tab_variavel(month, d):
             with st.form("add_saida"):
                 l=st.text_input("Descrição","",placeholder="Ex: Cinema, Restaurante…"); a=st.number_input("Valor (R$)",min_value=0.,step=5.)
                 ca=st.selectbox("Categoria",CATS); pm=st.selectbox("Pagamento",PAY)
+                fs=st.selectbox("Origem do Dinheiro", ["Salário do Mês", "Porquinho"])
                 if st.form_submit_button("Registrar", width="stretch"):
                     if l and a>0: 
-                        rid = db.add_extra(month,l,a,ca,pm,"saida")
-                        LocalState.add("extras", {"id":rid, "month":month, "label":l, "amount":a, "category":ca, "payment_method":pm, "expense_type":"saida"})
+                        rid = db.add_extra(month,l,a,ca,pm,"saida",fs)
+                        LocalState.add("extras", {"id":rid, "month":month, "label":l, "amount":a, "category":ca, "payment_method":pm, "expense_type":"saida", "fund_source": fs})
                     else: st.warning("Preencha os campos.")
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -665,10 +691,11 @@ def tab_variavel(month, d):
             with st.form("add_extra"):
                 l=st.text_input("Descrição","",placeholder="Ex: Padaria, Farmácia…"); a=st.number_input("Valor (R$)",min_value=0.,step=5.)
                 ca=st.selectbox("Categoria",CATS); pm=st.selectbox("Método",["PIX","Dinheiro","Transferência","Débito","Outro"])
+                fs=st.selectbox("Origem do Dinheiro", ["Salário do Mês", "Porquinho"])
                 if st.form_submit_button("Registrar", width="stretch"):
                     if l and a>0: 
-                        rid = db.add_extra(month,l,a,ca,pm,"extra")
-                        LocalState.add("extras", {"id":rid, "month":month, "label":l, "amount":a, "category":ca, "payment_method":pm, "expense_type":"extra"})
+                        rid = db.add_extra(month,l,a,ca,pm,"extra",fs)
+                        LocalState.add("extras", {"id":rid, "month":month, "label":l, "amount":a, "category":ca, "payment_method":pm, "expense_type":"extra", "fund_source": fs})
                     else: st.warning("Preencha os campos.")
             st.markdown('</div>', unsafe_allow_html=True)
 
