@@ -890,6 +890,48 @@ def tab_metas(d):
                 else: st.warning("Preencha os campos.")
         st.markdown('</div>', unsafe_allow_html=True)
 
+def tab_visualizacao_anual(month):
+    st.markdown(f'<h2 style="font-size:22px;font-weight:700;color:#1a2332;margin-bottom:4px">Projeção de 24 Meses</h2>', unsafe_allow_html=True)
+    st.markdown(f'<p style="color:#6b7280;font-size:13px;margin-bottom:20px">Iniciando em {ML(month)} (Baseado em Rendas, Fixos e Parcelamentos atuais)</p>', unsafe_allow_html=True)
+
+    data = db.get_projection_data(month, 24)
+
+    html = """<div style="overflow-x:auto"><table class="tbl">
+    <thead>
+        <tr>
+            <th>Mês</th>
+            <th style="background:#dbeafe;color:#1e40af">Renda 15</th>
+            <th style="background:#fee2e2;color:#991b1b">Contas 15</th>
+            <th style="border-right:2px solid #e5e7eb;font-weight:800">Sobra 15</th>
+            <th style="background:#ede9fe;color:#5b21b6">Renda 30</th>
+            <th style="background:#fef3c7;color:#92400e">Contas 30</th>
+            <th style="border-right:2px solid #e5e7eb;font-weight:800">Sobra 30</th>
+            <th style="background:var(--green);color:white;font-weight:800">Sobra Geral</th>
+        </tr>
+    </thead>
+    <tbody>"""
+
+    for r in data:
+        c15 = "#16a34a" if r['sobra_15'] >= 0 else "#ef4444"
+        c30 = "#16a34a" if r['sobra_30'] >= 0 else "#ef4444"
+        cg  = "#16a34a" if r['sobra_geral'] >= 0 else "#ef4444"
+        
+        html += f"""
+        <tr>
+            <td style="font-weight:600">{ML(r['mes'])}</td>
+            <td style="color:#1e40af">{R(r['inc_15'])}</td>
+            <td style="color:#991b1b">{R(r['gas_15'])}</td>
+            <td style="font-family:DM Mono; font-weight:700; color:{c15}; border-right:2px solid #e5e7eb">{R(r['sobra_15'])}</td>
+            <td style="color:#5b21b6">{R(r['inc_30'])}</td>
+            <td style="color:#92400e">{R(r['gas_30'])}</td>
+            <td style="font-family:DM Mono; font-weight:700; color:{c30}; border-right:2px solid #e5e7eb">{R(r['sobra_30'])}</td>
+            <td style="font-family:DM Mono; font-weight:800; color:{cg}; background:#f0fdf4">{R(r['sobra_geral'])}</td>
+        </tr>
+        """
+    
+    html += "</tbody></table></div>"
+    st.markdown(html, unsafe_allow_html=True)
+
 def tab_assistente(month, d):
     st.markdown('<div style="text-align:center;padding:10px 0 20px"><h2 style="font-size:22px;font-weight:700;color:#1a2332;margin:0">Gestor Financeiro IA</h2><p style="color:#6b7280;font-size:13px;margin-top:5px">Conselheiro e organizador prático da família</p></div>', unsafe_allow_html=True)
     cfg=d["config"]; inc=d["income"]; fix=d["fixed"]; ext=d["extras"]; subs=d["subs"]
@@ -1032,7 +1074,9 @@ def main():
 
     d = LocalState.get(month)
 
-    t1,t2,t3,t4,t5,t6,t7,t8,t9,t10=st.tabs(["📊 Painel", "💰 Renda", "🏠 Contas Fixas", "📋 Planilha", "💳 Variável", "🐷 Guardado", "⚠️ Dívidas", "🎯 Metas", "🤖 Gestor IA", "⚙️ Config"])
+    tabs = st.tabs(["📊 Painel", "💰 Renda", "🏠 Contas Fixas", "📋 Planilha", "💳 Variável", "🐷 Guardado", "⚠️ Dívidas", "🎯 Metas", "📅 24 Meses", "🤖 Gestor IA", "⚙️ Config"])
+    t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11 = tabs
+    
     with t1: tab_painel(month, d)
     with t2: tab_renda(month, d)
     with t3: tab_contas(month, d)
@@ -1041,8 +1085,9 @@ def main():
     with t6: tab_guardado(month, d)
     with t7: tab_dividas(d)
     with t8: tab_metas(d)
-    with t9: tab_assistente(month, d)
-    with t10: tab_config(d)
+    with t9: tab_visualizacao_anual(month)
+    with t10: tab_assistente(month, d)
+    with t11: tab_config(d)
 
 if __name__ == "__main__":
     main()
