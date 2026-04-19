@@ -13,8 +13,7 @@ MN   = {"01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril","05":"Maio",
         "11":"Novembro","12":"Dezembro"}
 CATS = ["Moradia", "Água", "Luz", "Telefone/Internet", "Condomínio", "IPTU", 
         "Transporte", "Saúde", "Seguro de Vida", "Educação (Isa)", "Supermercado", 
-        "Art Pão", "Pizza", "Compra Shopping", "IFOOD/99FOOD", "Lanches avulsos", 
-        "Farmácia",  "Lazer", "Streaming", "Serviços", "Vestuário", "Outros"]
+        "Lazer", "Streaming", "Serviços", "Vestuário", "Outros"]
 PAY  = ["PIX","Dinheiro","Débito","Transferência","Outro"]
 
 def R(v):
@@ -736,23 +735,6 @@ def tab_variavel(month, d):
                         LocalState.add("subs", {"id":rid, "label":l, "amount":a, "category":ca, "billing_day":int(bd), "active":1})
             st.markdown('</div>', unsafe_allow_html=True)
 
-def _parse_fatura(api_key, text, month, card_name):
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-    system='Analise a fatura e retorne APENAS um JSON array válido neste formato exato: [{"label":"NOME","total_amount":VALOR,"installments":1,"start_month":"AAAA-MM"}]. Para compras parceladas, total_amount é o valor total da compra. Sem explicações ou markdown em volta.'
-    
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system)
-        r = model.generate_content(f"Fatura {month}:\n{text}")
-        raw = r.text.strip().replace("```json","").replace("```","").strip()
-        items = json.loads(raw)
-        count = 0
-        for it in items:
-            if "label" in it and "total_amount" in it:
-                db.add_cc(it["label"],float(it["total_amount"]),int(it.get("installments",1)),it.get("start_month",month),card_name); count+=1
-        st.success(f"✅ {count} item(s) importado(s)!"); LocalState.reload()
-    except Exception as e: st.error(f"Erro ao processar fatura: {e}")
-
 def tab_guardado(month, d):
     prev_month = prev_m(month)
     prev_leftover = LocalState.get_leftover(prev_month)
@@ -896,40 +878,26 @@ def tab_visualizacao_anual(month):
 
     data = db.get_projection_data(month, 24)
 
-    html = """<div style="overflow-x:auto"><table class="tbl">
-    <thead>
-        <tr>
-            <th>Mês</th>
-            <th style="background:#dbeafe;color:#1e40af">Renda 15</th>
-            <th style="background:#fee2e2;color:#991b1b">Contas 15</th>
-            <th style="border-right:2px solid #e5e7eb;font-weight:800">Sobra 15</th>
-            <th style="background:#ede9fe;color:#5b21b6">Renda 30</th>
-            <th style="background:#fef3c7;color:#92400e">Contas 30</th>
-            <th style="border-right:2px solid #e5e7eb;font-weight:800">Sobra 30</th>
-            <th style="background:var(--green);color:white;font-weight:800">Sobra Geral</th>
-        </tr>
-    </thead>
-    <tbody>"""
+    html = '<div style="overflow-x:auto"><table class="tbl">'
+    html += '<thead><tr><th>Mês</th><th style="background:#dbeafe;color:#1e40af">Renda 15</th><th style="background:#fee2e2;color:#991b1b">Contas 15</th><th style="border-right:2px solid #e5e7eb;font-weight:800">Sobra 15</th><th style="background:#ede9fe;color:#5b21b6">Renda 30</th><th style="background:#fef3c7;color:#92400e">Contas 30</th><th style="border-right:2px solid #e5e7eb;font-weight:800">Sobra 30</th><th style="background:var(--green);color:white;font-weight:800">Sobra Geral</th></tr></thead><tbody>'
 
     for r in data:
         c15 = "#16a34a" if r['sobra_15'] >= 0 else "#ef4444"
         c30 = "#16a34a" if r['sobra_30'] >= 0 else "#ef4444"
         cg  = "#16a34a" if r['sobra_geral'] >= 0 else "#ef4444"
         
-        html += f"""
-        <tr>
-            <td style="font-weight:600">{ML(r['mes'])}</td>
-            <td style="color:#1e40af">{R(r['inc_15'])}</td>
-            <td style="color:#991b1b">{R(r['gas_15'])}</td>
-            <td style="font-family:DM Mono; font-weight:700; color:{c15}; border-right:2px solid #e5e7eb">{R(r['sobra_15'])}</td>
-            <td style="color:#5b21b6">{R(r['inc_30'])}</td>
-            <td style="color:#92400e">{R(r['gas_30'])}</td>
-            <td style="font-family:DM Mono; font-weight:700; color:{c30}; border-right:2px solid #e5e7eb">{R(r['sobra_30'])}</td>
-            <td style="font-family:DM Mono; font-weight:800; color:{cg}; background:#f0fdf4">{R(r['sobra_geral'])}</td>
-        </tr>
-        """
+        html += '<tr>'
+        html += f'<td style="font-weight:600">{ML(r["mes"])}</td>'
+        html += f'<td style="color:#1e40af">{R(r["inc_15"])}</td>'
+        html += f'<td style="color:#991b1b">{R(r["gas_15"])}</td>'
+        html += f'<td style="font-family:DM Mono; font-weight:700; color:{c15}; border-right:2px solid #e5e7eb">{R(r["sobra_15"])}</td>'
+        html += f'<td style="color:#5b21b6">{R(r["inc_30"])}</td>'
+        html += f'<td style="color:#92400e">{R(r["gas_30"])}</td>'
+        html += f'<td style="font-family:DM Mono; font-weight:700; color:{c30}; border-right:2px solid #e5e7eb">{R(r["sobra_30"])}</td>'
+        html += f'<td style="font-family:DM Mono; font-weight:800; color:{cg}; background:#f0fdf4">{R(r["sobra_geral"])}</td>'
+        html += '</tr>'
     
-    html += "</tbody></table></div>"
+    html += '</tbody></table></div>'
     st.markdown(html, unsafe_allow_html=True)
 
 def tab_assistente(month, d):
