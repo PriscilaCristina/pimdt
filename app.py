@@ -13,7 +13,8 @@ MN   = {"01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril","05":"Maio",
         "11":"Novembro","12":"Dezembro"}
 CATS = ["Moradia", "Água", "Luz", "Telefone/Internet", "Condomínio", "IPTU", 
         "Transporte", "Saúde", "Seguro de Vida", "Educação (Isa)", "Supermercado", 
-        "Lazer", "Streaming", "Serviços", "Vestuário", "Outros"]
+        "Art Pão", "Pizza", "Compra Shopping", "IFOOD/99FOOD", "Lanches avulsos", 
+        "Farmácia",  "Lazer", "Streaming", "Serviços", "Vestuário", "Outros"]
 PAY  = ["PIX","Dinheiro","Débito","Transferência","Outro"]
 
 def R(v):
