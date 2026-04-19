@@ -390,6 +390,60 @@ def set_payment(month, itype, iid, ilabel, amount, paid: bool):
 def update_sub_billing_day(rid, day):
     _exec("UPDATE subscriptions SET billing_day=%s WHERE id=%s", (day, rid))
 
+def get_projection_data(start_month: str, periods: int = 24) -> list:
+    base = get_month_data(start_month)
+    projection = []
+    
+    curr_y = int(start_month[:4])
+    curr_m = int(start_month[5:])
+    
+    for i in range(periods):
+        m_str = f"{curr_y}-{curr_m:02d}"
+        
+        inc_15 = sum(r["amount"] for r in base["income"] if 11 <= r["due_day"] <= 29)
+        inc_30 = sum(r["amount"] for r in base["income"] if r["due_day"] >= 30 or r["due_day"] <= 10)
+        
+        def get_cycle(r):
+            return r.get("payment_cycle") or (15 if 11 <= r.get("due_day", 30) <= 29 else 30)
+            
+        fix_15 = sum(r["amount"] for r in base["fixed"] if get_cycle(r) == 15)
+        fix_30 = sum(r["amount"] for r in base["fixed"] if get_cycle(r) == 30)
+        
+        bills_15 = sum(t["estimated_amount"] for t in base["bill_templates"] if 11 <= t["due_day"] <= 29)
+        bills_30 = sum(t["estimated_amount"] for t in base["bill_templates"] if t["due_day"] >= 30 or t["due_day"] <= 10)
+        
+        cc_val = cc_total_from_data(base["cc_all"], m_str)
+        
+        debt_15 = 0
+        debt_30 = 0
+        for d in base["debts"]:
+            meses_restantes = months_to_zero(d["remaining_amount"], d["monthly_payment"], d["interest_rate"])
+            if i < meses_restantes:
+                if 11 <= d.get("due_day", 30) <= 29: debt_15 += d["monthly_payment"]
+                else: debt_30 += d["monthly_payment"]
+        
+        total_15 = fix_15 + bills_15 + debt_15
+        total_30 = fix_30 + bills_30 + debt_30 + cc_val
+        
+        sobra_15 = inc_15 - total_15
+        sobra_30 = inc_30 - total_30
+        
+        projection.append({
+            "mes": m_str,
+            "inc_15": inc_15, "gas_15": total_15, "sobra_15": sobra_15,
+            "inc_30": inc_30, "gas_30": total_30, "sobra_30": sobra_30,
+            "sobra_geral": sobra_15 + sobra_30
+        })
+        
+        # Increment month safely without external libraries
+        curr_m += 1
+        if curr_m > 12:
+            curr_m = 1
+            curr_y += 1
+            
+    return projection
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS income(id SERIAL PRIMARY KEY, month TEXT, label TEXT, amount FLOAT DEFAULT 0, due_day INT DEFAULT 30);
